@@ -1,0 +1,66 @@
+:root {
+  --ink-bg: #12162A;
+  --ink-bg-elevated: #1F2540;
+  --ink-bg-card: #242B4A;
+  --line: rgba(232, 230, 223, 0.09);
+  --gold: #D4A657;
+  --gold-soft: rgba(212, 166, 87, 0.16);
+  --teal: #4FB0A5;
+  --teal-soft: rgba(79, 176, 165, 0.16);
+  --danger: #C97064;
+  --text: #E8E6DF;
+  --text-dim: rgba(232, 230, 223, 0.58);
+  --text-faint: rgba(232, 230, 223, 0.32);
+
+  --font-display: 'Shippori Mincho', serif;
+  --font-body: 'Zen Kaku Gothic New', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --radius: 14px;
+  --radius-sm: 8px;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--ink-bg);
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(79, 176, 165, 0.08), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(212, 166, 87, 0.06), transparent);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select, textarea { font-family: inherit; color: inherit; }
+button { cursor: pointer; border: none; background: none; }
+
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+::selection { background: var(--gold-soft); }
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0;
+}
+
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.app-shell {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 84px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
