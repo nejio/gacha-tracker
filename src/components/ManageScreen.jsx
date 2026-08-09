@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import PityGauge from './PityGauge'
 import BackupSection from './BackupSection'
-import { formatCurrency, formatYen, systemPulls, GAME_PRESETS, APP_VERSION, BUILD_DATE, formatBuildDate } from '../utils/calc'
+import { formatYen, systemPulls, GAME_PRESETS, APP_VERSION, BUILD_DATE, formatBuildDate } from '../utils/calc'
+import { appCurrencies, poolTotal } from '../utils/currency'
 
 export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls, backupApis }) {
   const [presetKey, setPresetKey] = useState('')
@@ -29,14 +30,27 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
   const addApp = async (e) => {
     e.preventDefault()
     if (!newApp.trim()) return
+    // 通貨定義を組み立てる。2通貨制なら課金で買う通貨を先頭に置く
+    const currencies = []
+    if (preset?.purchaseCurrencyName) {
+      currencies.push({
+        id: 'purchase', name: preset.purchaseCurrencyName,
+        openingPaid: 0, openingFree: 0,
+        yenPerUnit: Math.round((Number(newYenRate) || 0) * preset.currencyPerPurchaseUnit * 100) / 100
+      })
+    }
+    currencies.push({
+      id: 'main', name: newCurrencyName.trim() || '石',
+      openingPaid: 0, openingFree: Number(newOpeningBalance) || 0,
+      yenPerUnit: Number(newYenRate) || 0
+    })
+
     const ref = await appsApi.add({
       name: newApp.trim(),
-      currencyName: newCurrencyName.trim() || '石',
-      openingBalance: Number(newOpeningBalance) || 0,   // 記録開始時点の残高(ここを直すと全体が再計算される)
+      currencies,
+      defaultCurrencyId: 'main',
+      schemaVersion: 2,
       openingDate: new Date().toISOString(),
-      yenPerCurrency: Number(newYenRate) || 0,
-      // 2通貨制のゲームのみ設定される(課金通貨 → ガチャ通貨の換算)
-      purchaseCurrencyName: preset?.purchaseCurrencyName || null,
       currencyPerPurchaseUnit: preset?.currencyPerPurchaseUnit || null
     })
     if (preset) {
@@ -49,6 +63,7 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
           openingPity: 0,
           openingGuaranteed: false,
           openingDate: new Date().toISOString(),
+          currencyId: 'main',
           system: b.system
         })
       }
@@ -125,42 +140,7 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <div style={{ fontWeight: 500 }}>{app.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }} className="mono">
-                  残高: {formatCurrency(app.currencyBalance || 0, app.currencyName || '石')}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 11, color: 'var(--text-dim)' }}>
-                  開始時の残高
-                  <input
-                    type="number"
-                    value={app.openingBalance ?? 0}
-                    onChange={e => appsApi.update(app.id, { openingBalance: e.target.value === '' ? 0 : Number(e.target.value) })}
-                    style={{ ...inputStyle, width: 80, padding: '4px 6px', fontSize: 11, flex: 'none' }}
-                  />
-                  {app.currencyName || '石'}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: 11, color: 'var(--text-dim)' }}>
-                  1{app.currencyName || '石'}あたり
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={app.yenPerCurrency ?? ''}
-                    onChange={e => appsApi.update(app.id, { yenPerCurrency: e.target.value === '' ? '' : Number(e.target.value) })}
-                    style={{ ...inputStyle, width: 64, padding: '4px 6px', fontSize: 11, flex: 'none' }}
-                  />
-                  円(予算計画の換算に使用)
-                </div>
-                {app.purchaseCurrencyName && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 11, color: 'var(--text-dim)', flexWrap: 'wrap' }}>
-                    {app.purchaseCurrencyName}1個 =
-                    <input
-                      type="number"
-                      value={app.currencyPerPurchaseUnit ?? ''}
-                      onChange={e => appsApi.update(app.id, { currencyPerPurchaseUnit: e.target.value === '' ? null : Number(e.target.value) })}
-                      style={{ ...inputStyle, width: 60, padding: '4px 6px', fontSize: 11, flex: 'none' }}
-                    />
-                    {app.currencyName || '石'}
-                  </div>
-                )}
+                <CurrencyEditor app={app} appsApi={appsApi} />
               </div>
               <div style={{ display: 'flex', gap: 12 }}>
                 <button onClick={() => setExpandedAppId(expandedAppId === app.id ? null : app.id)} style={linkBtnStyle}>
@@ -191,6 +171,56 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
   )
 }
 
+// アプリの通貨(残高・開始値・円単価)を編集する
+function CurrencyEditor({ app, appsApi }) {
+  const currencies = appCurrencies(app)
+  // 表示用に付与した balance / total は保存しない
+  const strip = (list) => list.map(({ balance, total, ...rest }) => rest)
+  const save = (list) => appsApi.update(app.id, { currencies: strip(list) })
+
+  const updateCurrency = (id, patch) => save(currencies.map(c => (c.id === id ? { ...c, ...patch } : c)))
+  const addCurrency = () => save([...currencies, { id: `c${Date.now()}`, name: '新しい通貨', openingPaid: 0, openingFree: 0, yenPerUnit: 0 }])
+  const removeCurrency = (id) => { if (currencies.length > 1) save(currencies.filter(c => c.id !== id)) }
+
+  return (
+    <div style={{ marginTop: 6 }}>
+      {currencies.map(c => {
+        const bal = c.balance || { paid: 0, free: 0 }
+        return (
+          <div key={c.id} style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--line)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input value={c.name} onChange={e => updateCurrency(c.id, { name: e.target.value })}
+                style={{ ...inputStyle, padding: '4px 8px', fontSize: 12, flex: 1 }} />
+              <span className="mono" style={{ fontSize: 12, color: 'var(--gold)', whiteSpace: 'nowrap' }}>
+                {(c.total ?? poolTotal(bal)).toLocaleString('ja-JP')}
+              </span>
+              {currencies.length > 1 && (
+                <button onClick={() => removeCurrency(c.id)} style={{ fontSize: 10, color: 'var(--danger)' }}>削除</button>
+              )}
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 3 }} className="mono">
+              有償 {bal.paid.toLocaleString('ja-JP')} / 無償 {bal.free.toLocaleString('ja-JP')}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 5, fontSize: 10, color: 'var(--text-dim)', flexWrap: 'wrap' }}>
+              開始時 有償
+              <input type="number" value={c.openingPaid ?? 0} onChange={e => updateCurrency(c.id, { openingPaid: Number(e.target.value) || 0 })}
+                style={{ ...inputStyle, width: 66, padding: '3px 6px', fontSize: 10, flex: 'none' }} />
+              無償
+              <input type="number" value={c.openingFree ?? 0} onChange={e => updateCurrency(c.id, { openingFree: Number(e.target.value) || 0 })}
+                style={{ ...inputStyle, width: 66, padding: '3px 6px', fontSize: 10, flex: 'none' }} />
+              1個=
+              <input type="number" step="0.01" value={c.yenPerUnit ?? 0} onChange={e => updateCurrency(c.id, { yenPerUnit: Number(e.target.value) || 0 })}
+                style={{ ...inputStyle, width: 56, padding: '3px 6px', fontSize: 10, flex: 'none' }} />
+              円
+            </div>
+          </div>
+        )
+      })}
+      <button onClick={addCurrency} style={{ fontSize: 11, color: 'var(--teal)', marginTop: 8 }}>＋ 通貨を追加</button>
+    </div>
+  )
+}
+
 function BannerSection({ appId, currencyName, banners, bannersApi }) {
   const [form, setForm] = useState({ name: '', pityMax: 90, costPerPull: 160, openingPity: 0 })
 
@@ -204,7 +234,8 @@ function BannerSection({ appId, currencyName, banners, bannersApi }) {
       costPerPull: Number(form.costPerPull) || 0,
       openingPity: Number(form.openingPity) || 0,
       openingGuaranteed: false,
-      openingDate: new Date().toISOString()
+      openingDate: new Date().toISOString(),
+      currencyId: 'main'
     })
     setForm({ name: '', pityMax: 90, costPerPull: 160, openingPity: 0 })
   }

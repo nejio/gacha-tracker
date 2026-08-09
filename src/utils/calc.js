@@ -94,9 +94,10 @@ export function pullOutcome(pull) {
 }
 
 // 天井カウンター = 基準時点の状態から、記録を古い順に再生した結果
-export function computePity(banner, pulls) {
+// 引数はガチャ消費の記録(v1.4以降は consumptions、それ以前は pulls)
+export function computePity(banner, gachaRecords) {
   const cp = pityCheckpoint(banner)
-  const related = pulls
+  const related = (gachaRecords || [])
     .filter(p => p.bannerId === banner.id && p.date >= cp.since)
     .sort((a, b) => String(a.date).localeCompare(String(b.date)))
 
@@ -118,8 +119,13 @@ export function withDerivedBalance(apps, purchases, pulls) {
   return apps.map(a => ({ ...a, currencyBalance: computeBalance(a, purchases, pulls) }))
 }
 
-export function withDerivedPity(banners, pulls) {
-  return banners.map(b => ({ ...b, ...computePity(b, pulls) }))
+export function withDerivedPity(banners, gachaRecords) {
+  return banners.map(b => ({ ...b, ...computePity(b, gachaRecords) }))
+}
+
+// 消費記録からガチャに該当するものだけ取り出す(天井計算に使う)
+export function gachaConsumptions(consumptions) {
+  return (consumptions || []).filter(c => c.bannerId || (c.tags || []).includes('ガチャ'))
 }
 
 export function pityProgress(banner) {
@@ -135,8 +141,9 @@ const monthKey = (isoDate) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
-export function totalAmount(purchases) {
-  return purchases.reduce((sum, p) => sum + (p.amountYen || 0), 0)
+// 課金額の集計。支出は課金した時点で発生するため、取得記録のみから算出する
+export function totalAmount(acquisitions) {
+  return acquisitions.reduce((sum, p) => sum + (p.amountYen || 0), 0)
 }
 
 export function monthlyTotal(purchases, targetMonthKey) {
@@ -262,7 +269,11 @@ export const SYSTEM_PRESETS = [
 export function scheduleCosts(schedule, app) {
   const options = schedule.targetOptions || []
   const target = options.find(o => o.id === schedule.selectedTargetId) || options[0] || { label: '-', copies: 1 }
-  const yenRate = app?.yenPerCurrency || 0
+  // ガチャに使う通貨の円単価。新構造では currencies から取る
+  const list = Array.isArray(app?.currencies) && app.currencies.length > 0 ? app.currencies : null
+  const yenRate = list
+    ? (Number((list.find(c => c.id === 'main') || list[list.length - 1])?.yenPerUnit) || 0)
+    : (Number(app?.yenPerCurrency) || 0)
   const per = systemPulls(scheduleSystem(schedule))
   const pullsExpected = (target.copies || 1) * per.expected
   const pullsMax = per.max == null ? null : (target.copies || 1) * per.max

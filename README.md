@@ -151,6 +151,19 @@ NTE: Neverness to Everness / Project Mugen / ヘブンバーンズレッド / �
 実装は `src/utils/backup.js` と `src/components/BackupSection.jsx` にあります。
 データ構造を変更する際は `BACKUP_COLLECTIONS` の一覧も更新してください。
 
+## 旧構造からの移行
+
+v1.3以前のデータは、初回起動時に自動で新構造へ変換される(`src/utils/migration.js`)。
+
+- アプリ → `currencies` 配列に変換。開始残高は無償扱いで引き継ぐ(区別が無かったため)
+- `purchases` → `acquisitions`。2通貨制の課金は「課金通貨の取得」+「ガチャ通貨への交換」の2件に分解
+- `pulls` → `consumptions`(用途タグ「ガチャ」付き)。天井情報はそのまま保持
+
+移行済みかどうかは `apps.schemaVersion` で判定し、1回だけ実行される。
+旧コレクション(`purchases` / `pulls`)は削除せずに残す。
+
+移行前後で課金額の合計が変わらないことをテストで確認している。
+
 ## 2通貨制のゲームへの対応
 
 課金で買う通貨と、ガチャで使う通貨が分かれているゲームに対応しています。
@@ -171,17 +184,64 @@ NTE: Neverness to Everness / Project Mugen / ヘブンバーンズレッド / �
 
 この設定は管理タブで編集でき、他のゲームにも同じ仕組みで適用できます。
 
+## 通貨と記録の構造
+
+課金管理として、課金で得た資産をすべて追跡する。ガチャに使った分だけでなく、
+スタミナ回復やパス購入に使った分も記録し、使途不明の支出が出ないようにしている。
+
+### 通貨
+
+アプリは複数の通貨を持つ。各通貨に有償・無償それぞれの残高がある。
+
+```
+apps/{appId}
+  name, openingDate, schemaVersion
+  currencies: [
+    { id: 'purchase', name: '展延源石', openingPaid, openingFree, yenPerUnit },
+    { id: 'main',     name: '赤晶石',   openingPaid, openingFree, yenPerUnit }
+  ]
+```
+
+### 記録の3種類
+
+| コレクション | 内容 | 主なフィールド |
+|---|---|---|
+| `acquisitions` | 取得(課金・無償) | `currencyId, amountYen, isFree, quantity` |
+| `exchanges` | 交換(通貨A→通貨B) | `fromCurrencyId, fromQty, toCurrencyId, toQty` |
+| `consumptions` | 消費(用途タグ付き) | `currencyId, quantity, tags[], paidOnly` |
+
+ガチャは「用途タグがガチャの消費」として扱う。`bannerId` や `outcome` などのガチャ固有の
+情報が付随し、天井計算に使われる。
+
+### 有償・無償の扱い
+
+消費時は**無償プールから先に引き、足りない分を有償プールから引く**。
+`paidOnly` を指定すると有償プールのみから引く(有償限定ガチャ向け)。
+
+交換では、交換元から引かれた有償・無償の比率で交換先に配分する。
+例: 展延源石40個(無償20・有償20)を赤晶石3,000個に交換 → 赤晶石は無償1,500・有償1,500。
+
+### 金額の考え方(重要)
+
+**支出が発生するのは課金した時点**であり、その通貨をいつ何に使うかは支出額に影響しない。
+
+- **課金額**(台帳タブの月次・累計) … `acquisitions` の `amountYen` のみから算出。
+  消費・交換は一切関与しない
+- **用途別の内訳** … 消費した通貨量を各通貨の `yenPerUnit` で換算した**参考値(相当額)**。
+  支出ではないため、通貨量を主・金額を従として表示し、「約◯円相当」と書き分ける
+
 ## 残高・天井の計算方式
 
 残高と天井カウンターは**値を保存せず、記録から毎回計算**しています。
 そのため記録を削除・編集しても、常に自動で整合が取れます。
 
 ```
-石残高 = 開始時の残高 + 開始日以降の獲得 − 開始日以降の消費
-天井   = 開始時のカウンター から、開始日以降の記録を古い順に再生した結果
+通貨残高 = 開始時の残高(有償・無償) から、開始日以降の取得・交換・消費を日時順に再生した結果
+天井     = 開始時のカウンター から、開始日以降のガチャ消費を古い順に再生した結果
 ```
 
-計算は `src/utils/calc.js` の `computeBalance` / `computePity` にあります。
+計算は `src/utils/currency.js` の `computeCurrencyBalances` と
+`src/utils/calc.js` の `computePity` にあります。
 値がズレた場合は、管理タブの「開始時の残高」「開始時の天井」を直せば全体が再計算されます。
 
 ### 履歴の分割読み込みへの備え

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from './contexts/AuthContext'
 import { useUserCollection } from './hooks/useUserCollection'
-import { withDerivedBalance, withDerivedPity } from './utils/calc'
+import { withDerivedPity, gachaConsumptions } from './utils/calc'
+import { withDerivedCurrencies } from './utils/currency'
+import { needsMigration, runMigration } from './utils/migration'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import RecordScreen from './components/RecordScreen'
@@ -21,46 +23,72 @@ export default function App() {
   const { user, loading, logout } = useAuth()
   const [tab, setTab] = useState('dashboard')
   const [recordPrefill, setRecordPrefill] = useState(null)
+  const [migrating, setMigrating] = useState(null)
 
   const appsApi = useUserCollection('apps', 'createdAt')
   const bannersApi = useUserCollection('banners', 'createdAt')
-  const purchasesApi = useUserCollection('purchases', 'date')       // 課金記録(円→石。無償も含む)
-  const pullsApi = useUserCollection('pulls', 'date')               // ガチャ消費記録(石を使って引く)
-  const schedulesApi = useUserCollection('schedules', 'createdAt')  // ガチャスケジュール
-  const budgetsApi = useUserCollection('budgets', 'createdAt')      // 月次予算
+  const schedulesApi = useUserCollection('schedules', 'createdAt')
+  const budgetsApi = useUserCollection('budgets', 'createdAt')
+  // 旧構造(移行元として読むだけ)
+  const purchasesApi = useUserCollection('purchases', 'date')
+  const pullsApi = useUserCollection('pulls', 'date')
+  // 新構造
+  const acquisitionsApi = useUserCollection('acquisitions', 'date')
+  const exchangesApi = useUserCollection('exchanges', 'date')
+  const consumptionsApi = useUserCollection('consumptions', 'date')
 
-  // 旧形式のデータ(残高・天井を保存していたもの)を初期値へ一度だけ移行する
+  // 旧構造から新構造への移行(1回だけ実行される)
   useEffect(() => {
     if (!user) return
-    for (const a of appsApi.items) {
-      if (a.openingBalance === undefined && a.currencyBalance !== undefined) {
-        // 既存の残高をそのまま開始残高にし、以降の記録で差し引かれないよう基準日を現在にする
-        appsApi.update(a.id, { openingBalance: a.currencyBalance, openingDate: new Date().toISOString() })
-      }
-    }
-    for (const b of bannersApi.items) {
-      if (b.openingPity === undefined && b.pityCurrent !== undefined) {
-        appsApi && bannersApi.update(b.id, {
-          openingPity: b.pityCurrent,
-          openingGuaranteed: !!b.guaranteed,
-          openingDate: new Date().toISOString()
-        })
-      }
-    }
-  }, [user, appsApi.items, bannersApi.items])
+    if (appsApi.loading || purchasesApi.loading || pullsApi.loading || bannersApi.loading) return
+    if (appsApi.items.length === 0) return
+    if (!needsMigration(appsApi.items)) return
+    if (migrating) return
 
-  // 残高と天井は保存値ではなく、記録から毎回計算する(記録の削除・編集で自動的に整合する)
-  const apps = useMemo(
-    () => withDerivedBalance(appsApi.items, purchasesApi.items, pullsApi.items),
-    [appsApi.items, purchasesApi.items, pullsApi.items]
-  )
+    setMigrating({ done: 0, label: '準備中' })
+    runMigration(
+      { apps: appsApi.items, banners: bannersApi.items, purchases: purchasesApi.items, pulls: pullsApi.items },
+      { apps: appsApi, banners: bannersApi, acquisitions: acquisitionsApi, exchanges: exchangesApi, consumptions: consumptionsApi },
+      { onProgress: (done, label) => setMigrating({ done, label }) }
+    )
+      .then(() => setMigrating(null))
+      .catch(err => setMigrating({ error: err.message }))
+  }, [user, appsApi.loading, purchasesApi.loading, pullsApi.loading, bannersApi.loading, appsApi.items])
+
+  const records = useMemo(() => ({
+    acquisitions: acquisitionsApi.items,
+    exchanges: exchangesApi.items,
+    consumptions: consumptionsApi.items
+  }), [acquisitionsApi.items, exchangesApi.items, consumptionsApi.items])
+
+  // 残高・天井は保存せず、記録から毎回計算する
+  const apps = useMemo(() => withDerivedCurrencies(appsApi.items, records), [appsApi.items, records])
   const banners = useMemo(
-    () => withDerivedPity(bannersApi.items, pullsApi.items),
-    [bannersApi.items, pullsApi.items]
+    () => withDerivedPity(bannersApi.items, gachaConsumptions(consumptionsApi.items)),
+    [bannersApi.items, consumptionsApi.items]
   )
 
   if (loading) return null
   if (!user) return <Login />
+
+  if (migrating) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center', gap: 10 }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 18 }}>データを更新しています</div>
+        {migrating.error ? (
+          <div style={{ fontSize: 13, color: 'var(--danger)' }}>エラー: {migrating.error}</div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{migrating.label}</div>
+            <div className="mono" style={{ fontSize: 12, color: 'var(--gold)' }}>{migrating.done} 件処理</div>
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', maxWidth: 260, lineHeight: 1.7 }}>
+              通貨と記録の構造を新しい形式に変換しています。この画面を閉じずにお待ちください。
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="app-shell">
@@ -73,7 +101,9 @@ export default function App() {
       </header>
 
       <main style={{ flex: 1, overflowY: 'auto' }}>
-        {tab === 'dashboard' && <Dashboard purchases={purchasesApi.items} apps={apps} />}
+        {tab === 'dashboard' && (
+          <Dashboard acquisitions={acquisitionsApi.items} consumptions={consumptionsApi.items} apps={apps} />
+        )}
 
         {tab === 'record' && (
           <RecordScreen
@@ -82,11 +112,11 @@ export default function App() {
             banners={banners}
             schedules={schedulesApi.items}
             prefill={recordPrefill}
-            pulls={pullsApi.items}
-            appsApi={appsApi}
+            consumptions={consumptionsApi.items}
             bannersApi={bannersApi}
-            purchasesApi={purchasesApi}
-            pullsApi={pullsApi}
+            acquisitionsApi={acquisitionsApi}
+            exchangesApi={exchangesApi}
+            consumptionsApi={consumptionsApi}
           />
         )}
 
@@ -95,7 +125,7 @@ export default function App() {
             apps={apps}
             schedules={schedulesApi.items}
             schedulesApi={schedulesApi}
-            pulls={pullsApi.items}
+            pulls={gachaConsumptions(consumptionsApi.items)}
             budgets={budgetsApi.items}
             budgetsApi={budgetsApi}
             onJumpToRecord={(sc) => { setRecordPrefill({ appId: sc.appId, scheduleId: sc.id, token: Date.now() }); setTab('record') }}
@@ -104,12 +134,14 @@ export default function App() {
 
         {tab === 'history' && (
           <HistoryScreen
-            purchases={purchasesApi.items}
-            pulls={pullsApi.items}
             apps={apps}
             banners={banners}
-            purchasesApi={purchasesApi}
-            pullsApi={pullsApi}
+            acquisitions={acquisitionsApi.items}
+            exchanges={exchangesApi.items}
+            consumptions={consumptionsApi.items}
+            acquisitionsApi={acquisitionsApi}
+            exchangesApi={exchangesApi}
+            consumptionsApi={consumptionsApi}
           />
         )}
 
@@ -119,10 +151,10 @@ export default function App() {
             appsApi={appsApi}
             banners={banners}
             bannersApi={bannersApi}
-            pulls={pullsApi.items}
             backupApis={{
-              apps: appsApi, banners: bannersApi, purchases: purchasesApi,
-              pulls: pullsApi, schedules: schedulesApi, budgets: budgetsApi
+              apps: appsApi, banners: bannersApi, purchases: purchasesApi, pulls: pullsApi,
+              schedules: schedulesApi, budgets: budgetsApi,
+              acquisitions: acquisitionsApi, exchanges: exchangesApi, consumptions: consumptionsApi
             }}
           />
         )}

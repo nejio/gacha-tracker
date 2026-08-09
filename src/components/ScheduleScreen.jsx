@@ -3,6 +3,14 @@ import {
   formatYen, scheduleCosts, overlapsMonth, pad2, ymd,
   defaultTargetOptions, systemPulls, SYSTEM_PRESETS
 } from '../utils/calc'
+import { appCurrencies } from '../utils/currency'
+
+// ガチャに使う通貨の円単価を取り出す(予算計算用)
+function gachaYenPerUnit(app) {
+  if (!app) return 0
+  const list = appCurrencies(app)
+  return Number((list.find(c => c.id === 'main') || list[list.length - 1])?.yenPerUnit) || 0
+}
 
 const appPalette = ['#D4A657', '#4FB0A5', '#C97064', '#8A7FD4', '#6FA8DC', '#B5CC6A']
 const colorForApp = (apps, appId) => {
@@ -13,7 +21,7 @@ const colorForApp = (apps, appId) => {
 // 予定に紐付いたガチャ消費の実績(石消費 × 円換算レート)
 function scheduleActualYen(schedule, pulls, app) {
   const spent = (pulls || []).filter(pl => pl.scheduleId === schedule.id).reduce((sum, pl) => sum + (pl.currencySpent || 0), 0)
-  return spent * (app?.yenPerCurrency || 0)
+  return spent * gachaYenPerUnit(app)
 }
 
 export default function ScheduleScreen({ apps, schedules, schedulesApi, pulls, budgets, budgetsApi, onJumpToRecord }) {
