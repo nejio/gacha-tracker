@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from './contexts/AuthContext'
 import { useUserCollection } from './hooks/useUserCollection'
+import { withDerivedBalance, withDerivedPity } from './utils/calc'
 import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 import RecordScreen from './components/RecordScreen'
@@ -28,6 +29,36 @@ export default function App() {
   const schedulesApi = useUserCollection('schedules', 'createdAt')  // ガチャスケジュール
   const budgetsApi = useUserCollection('budgets', 'createdAt')      // 月次予算
 
+  // 旧形式のデータ(残高・天井を保存していたもの)を初期値へ一度だけ移行する
+  useEffect(() => {
+    if (!user) return
+    for (const a of appsApi.items) {
+      if (a.openingBalance === undefined && a.currencyBalance !== undefined) {
+        // 既存の残高をそのまま開始残高にし、以降の記録で差し引かれないよう基準日を現在にする
+        appsApi.update(a.id, { openingBalance: a.currencyBalance, openingDate: new Date().toISOString() })
+      }
+    }
+    for (const b of bannersApi.items) {
+      if (b.openingPity === undefined && b.pityCurrent !== undefined) {
+        appsApi && bannersApi.update(b.id, {
+          openingPity: b.pityCurrent,
+          openingGuaranteed: !!b.guaranteed,
+          openingDate: new Date().toISOString()
+        })
+      }
+    }
+  }, [user, appsApi.items, bannersApi.items])
+
+  // 残高と天井は保存値ではなく、記録から毎回計算する(記録の削除・編集で自動的に整合する)
+  const apps = useMemo(
+    () => withDerivedBalance(appsApi.items, purchasesApi.items, pullsApi.items),
+    [appsApi.items, purchasesApi.items, pullsApi.items]
+  )
+  const banners = useMemo(
+    () => withDerivedPity(bannersApi.items, pullsApi.items),
+    [bannersApi.items, pullsApi.items]
+  )
+
   if (loading) return null
   if (!user) return <Login />
 
@@ -42,15 +73,16 @@ export default function App() {
       </header>
 
       <main style={{ flex: 1, overflowY: 'auto' }}>
-        {tab === 'dashboard' && <Dashboard purchases={purchasesApi.items} apps={appsApi.items} />}
+        {tab === 'dashboard' && <Dashboard purchases={purchasesApi.items} apps={apps} />}
 
         {tab === 'record' && (
           <RecordScreen
             key={recordPrefill?.token || 'default'}
-            apps={appsApi.items}
-            banners={bannersApi.items}
+            apps={apps}
+            banners={banners}
             schedules={schedulesApi.items}
             prefill={recordPrefill}
+            pulls={pullsApi.items}
             appsApi={appsApi}
             bannersApi={bannersApi}
             purchasesApi={purchasesApi}
@@ -60,7 +92,7 @@ export default function App() {
 
         {tab === 'schedule' && (
           <ScheduleScreen
-            apps={appsApi.items}
+            apps={apps}
             schedules={schedulesApi.items}
             schedulesApi={schedulesApi}
             pulls={pullsApi.items}
@@ -74,16 +106,15 @@ export default function App() {
           <HistoryScreen
             purchases={purchasesApi.items}
             pulls={pullsApi.items}
-            apps={appsApi.items}
+            apps={apps}
+            banners={banners}
             purchasesApi={purchasesApi}
             pullsApi={pullsApi}
-            appsApi={appsApi}
-            bannersApi={bannersApi}
           />
         )}
 
         {tab === 'manage' && (
-          <ManageScreen apps={appsApi.items} appsApi={appsApi} banners={bannersApi.items} bannersApi={bannersApi} />
+          <ManageScreen apps={apps} appsApi={appsApi} banners={banners} bannersApi={bannersApi} pulls={pullsApi.items} />
         )}
       </main>
 

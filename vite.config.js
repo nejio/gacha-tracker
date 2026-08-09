@@ -1,11 +1,20 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { readFileSync } from 'node:fs'
+
+// package.json のバージョンとビルド日時をアプリ内に埋め込む
+const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
+const buildDate = new Date().toISOString()
 
 // GitHub Pages にデプロイする場合、リポジトリ名に合わせて base を変更してください
 // 例: https://<user>.github.io/gacha-tracker/ の場合 base: '/gacha-tracker/'
 export default defineConfig({
   base: '/gacha-tracker/',
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __BUILD_DATE__: JSON.stringify(buildDate)
+  },
   plugins: [
     react(),
     VitePWA({

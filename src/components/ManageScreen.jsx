@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import PityGauge from './PityGauge'
-import { formatCurrency, formatYen, systemPulls, GAME_PRESETS } from '../utils/calc'
+import { formatCurrency, formatYen, systemPulls, GAME_PRESETS, APP_VERSION, BUILD_DATE, formatBuildDate } from '../utils/calc'
 
-export default function ManageScreen({ apps, appsApi, banners, bannersApi }) {
+export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls }) {
   const [presetKey, setPresetKey] = useState('')
   const [newApp, setNewApp] = useState('')
   const [newCurrencyName, setNewCurrencyName] = useState('石')
   const [newYenRate, setNewYenRate] = useState(1.5)
+  const [newOpeningBalance, setNewOpeningBalance] = useState('')
   const [expandedAppId, setExpandedAppId] = useState(null)
 
   const preset = GAME_PRESETS.find(g => g.key === presetKey)
@@ -30,7 +31,8 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi }) {
     const ref = await appsApi.add({
       name: newApp.trim(),
       currencyName: newCurrencyName.trim() || '石',
-      currencyBalance: 0,
+      openingBalance: Number(newOpeningBalance) || 0,   // 記録開始時点の残高(ここを直すと全体が再計算される)
+      openingDate: new Date().toISOString(),
       yenPerCurrency: Number(newYenRate) || 0
     })
     if (preset) {
@@ -40,13 +42,14 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi }) {
           name: b.name,
           pityMax: b.pityMax,
           costPerPull: b.costPerPull,
-          pityCurrent: 0,
-          guaranteed: false,
+          openingPity: 0,
+          openingGuaranteed: false,
+          openingDate: new Date().toISOString(),
           system: b.system
         })
       }
     }
-    setPresetKey(''); setNewApp(''); setNewCurrencyName('石'); setNewYenRate(1.5)
+    setPresetKey(''); setNewApp(''); setNewCurrencyName('石'); setNewYenRate(1.5); setNewOpeningBalance('')
   }
 
   return (
@@ -70,6 +73,11 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi }) {
             円
           </label>
         </div>
+
+        <label style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+          今持っている{newCurrencyName || '石'}の数(記録開始時点の残高)
+          <input type="number" value={newOpeningBalance} onChange={e => setNewOpeningBalance(e.target.value)} placeholder="0" style={{ ...inputStyle, marginTop: 4 }} />
+        </label>
 
         {preset && (
           <div style={{ background: 'var(--ink-bg-elevated)', borderRadius: 'var(--radius-sm)', padding: 12, fontSize: 11, color: 'var(--text-dim)' }}>
@@ -111,6 +119,16 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi }) {
                 <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }} className="mono">
                   残高: {formatCurrency(app.currencyBalance || 0, app.currencyName || '石')}
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 11, color: 'var(--text-dim)' }}>
+                  開始時の残高
+                  <input
+                    type="number"
+                    value={app.openingBalance ?? 0}
+                    onChange={e => appsApi.update(app.id, { openingBalance: e.target.value === '' ? 0 : Number(e.target.value) })}
+                    style={{ ...inputStyle, width: 80, padding: '4px 6px', fontSize: 11, flex: 'none' }}
+                  />
+                  {app.currencyName || '石'}
+                </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 6, fontSize: 11, color: 'var(--text-dim)' }}>
                   1{app.currencyName || '石'}あたり
                   <input
@@ -137,12 +155,21 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi }) {
           </div>
         ))}
       </div>
+
+      <div style={{
+        marginTop: 28, paddingTop: 14, borderTop: '1px solid var(--line)',
+        textAlign: 'center', fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.7
+      }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: 'var(--text-dim)' }}>召喚録</div>
+        <div className="mono">v{APP_VERSION}</div>
+        {BUILD_DATE && <div className="mono">build {formatBuildDate(BUILD_DATE)}</div>}
+      </div>
     </div>
   )
 }
 
 function BannerSection({ appId, currencyName, banners, bannersApi }) {
-  const [form, setForm] = useState({ name: '', pityMax: 90, costPerPull: 160 })
+  const [form, setForm] = useState({ name: '', pityMax: 90, costPerPull: 160, openingPity: 0 })
 
   const addBanner = async (e) => {
     e.preventDefault()
@@ -152,10 +179,11 @@ function BannerSection({ appId, currencyName, banners, bannersApi }) {
       name: form.name.trim(),
       pityMax: Number(form.pityMax) || 0,
       costPerPull: Number(form.costPerPull) || 0,
-      pityCurrent: 0,
-      guaranteed: false
+      openingPity: Number(form.openingPity) || 0,
+      openingGuaranteed: false,
+      openingDate: new Date().toISOString()
     })
-    setForm({ name: '', pityMax: 90, costPerPull: 160 })
+    setForm({ name: '', pityMax: 90, costPerPull: 160, openingPity: 0 })
   }
 
   return (
@@ -164,6 +192,26 @@ function BannerSection({ appId, currencyName, banners, bannersApi }) {
         <div key={b.id} style={{ marginBottom: 14 }}>
           <PityGauge banner={b} />
           <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>1回 {b.costPerPull}{currencyName}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 11, color: 'var(--text-dim)', flexWrap: 'wrap' }}>
+            開始時の天井
+            <input
+              type="number"
+              value={b.openingPity ?? 0}
+              onChange={e => bannersApi.update(b.id, { openingPity: e.target.value === '' ? 0 : Number(e.target.value) })}
+              style={{ ...inputStyle, width: 64, padding: '4px 6px', fontSize: 11, flex: 'none' }}
+            />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input
+                type="checkbox"
+                checked={!!b.openingGuaranteed}
+                onChange={e => bannersApi.update(b.id, { openingGuaranteed: e.target.checked })}
+              />
+              開始時すり抜け済み
+            </label>
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+            表示中の天井は記録から自動計算されます。ズレた場合はここを修正してください
+          </div>
           <div style={{ textAlign: 'right', marginTop: 4 }}>
             <button onClick={() => bannersApi.remove(b.id)} style={{ ...linkBtnStyle, color: 'var(--danger)', fontSize: 11 }}>
               このバナーを削除
@@ -178,6 +226,7 @@ function BannerSection({ appId, currencyName, banners, bannersApi }) {
           <LabeledInput label="天井回数" value={form.pityMax} onChange={v => setForm({ ...form, pityMax: v })} />
           <LabeledInput label={`1回の${currencyName}消費数`} value={form.costPerPull} onChange={v => setForm({ ...form, costPerPull: v })} />
         </div>
+        <LabeledInput label="現在の天井カウンター(記録開始時点)" value={form.openingPity} onChange={v => setForm({ ...form, openingPity: v })} />
         <button type="submit" style={primaryBtnStyle}>バナーを追加</button>
       </form>
     </div>

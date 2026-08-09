@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import { increment } from 'firebase/firestore'
 import PityGauge from './PityGauge'
 import { applyPullToBanner, formatCurrency } from '../utils/calc'
 
@@ -8,7 +7,7 @@ const SUB_TABS = [
   { key: 'pull', label: 'ガチャを引く(石を消費)' }
 ]
 
-export default function RecordScreen({ apps, banners, schedules, prefill, appsApi, bannersApi, purchasesApi, pullsApi }) {
+export default function RecordScreen({ apps, banners, schedules, prefill, pulls, appsApi, bannersApi, purchasesApi, pullsApi }) {
   const [subTab, setSubTab] = useState(prefill ? 'pull' : 'purchase')
 
   if (apps.length === 0) {
@@ -40,7 +39,7 @@ export default function RecordScreen({ apps, banners, schedules, prefill, appsAp
 
       {subTab === 'purchase'
         ? <PurchaseForm apps={apps} appsApi={appsApi} purchasesApi={purchasesApi} />
-        : <PullForm apps={apps} banners={banners} schedules={schedules} prefill={prefill} appsApi={appsApi} bannersApi={bannersApi} pullsApi={pullsApi} />}
+        : <PullForm apps={apps} banners={banners} schedules={schedules} prefill={prefill} pulls={pulls} bannersApi={bannersApi} pullsApi={pullsApi} />}
     </div>
   )
 }
@@ -72,7 +71,6 @@ function PurchaseForm({ apps, appsApi, purchasesApi }) {
       currencyGained: Number(currencyGained),
       note: note || null
     })
-    await appsApi.update(appId, { currencyBalance: increment(Number(currencyGained)) })
 
     setSavedMsg(`${formatCurrency(Number(currencyGained), selectedApp?.currencyName || '石')} を追加しました`)
     setAmountYen(''); setCurrencyGained(''); setNote(''); setIsFree(false)
@@ -123,7 +121,7 @@ function PurchaseForm({ apps, appsApi, purchasesApi }) {
 }
 
 // ============ ガチャ消費記録(石を使って引く) ============
-function PullForm({ apps, banners, schedules, prefill, appsApi, bannersApi, pullsApi }) {
+function PullForm({ apps, banners, schedules, prefill, pulls, bannersApi, pullsApi }) {
   const [appId, setAppId] = useState(prefill?.appId || '')
   const [scheduleId, setScheduleId] = useState(prefill?.scheduleId || '')
   const [bannerId, setBannerId] = useState('')
@@ -141,6 +139,18 @@ function PullForm({ apps, banners, schedules, prefill, appsApi, bannersApi, pull
   const appSchedules = (schedules || []).filter(sc => sc.appId === appId)
   const selectedBanner = banners.find(b => b.id === bannerId)
 
+  // バナーを選んだら、前回そのバナーで狙った対象を自動入力する
+  const chooseBanner = (id) => {
+    setBannerId(id)
+    const b = banners.find(x => x.id === id)
+    if (b?.lastTarget && !targetItem.trim()) setTargetItem(b.lastTarget)
+  }
+
+  // 同じアプリで過去に入力した対象を候補として出す
+  const targetSuggestions = [...new Set(
+    (pulls || []).filter(p => p.appId === appId && p.targetItem).map(p => p.targetItem)
+  )].slice(0, 20)
+
   const autoSpend = selectedBanner ? (Number(pullCount) || 0) * (selectedBanner.costPerPull || 0) : 0
   const currencySpent = currencySpentOverride !== '' ? Number(currencySpentOverride) : autoSpend
   const atPullValue = atPull !== '' ? Number(atPull) : Number(pullCount)
@@ -151,7 +161,7 @@ function PullForm({ apps, banners, schedules, prefill, appsApi, bannersApi, pull
   }, [selectedBanner, pullCount, outcome, atPullValue])
 
   const reset = () => {
-    setPullCount(10); setCurrencySpentOverride(''); setTargetItem(''); setOutcome('none'); setAtPull(''); setNote('')
+    setPullCount(10); setCurrencySpentOverride(''); setOutcome('none'); setAtPull(''); setNote('')
   }
 
   const submit = async (e) => {
@@ -160,6 +170,7 @@ function PullForm({ apps, banners, schedules, prefill, appsApi, bannersApi, pull
     if (!pullCount || Number(pullCount) <= 0) { setErrorMsg('ガチャ回数を入力してください'); return }
     setErrorMsg('')
 
+    // 天井カウンターと残高は記録から都度計算されるため、ここでは書き込まない
     let pityTriggered = false
     let finalObtained = outcome === 'obtained'
     let finalLost = outcome === 'lost'
@@ -169,7 +180,6 @@ function PullForm({ apps, banners, schedules, prefill, appsApi, bannersApi, pull
       finalObtained = result.obtained
       finalLost = result.lost
       pityTriggered = result.isPityTriggered
-      await bannersApi.update(selectedBanner.id, { pityCurrent: result.pityCurrent, guaranteed: result.guaranteed })
     }
 
     await pullsApi.add({
@@ -180,16 +190,18 @@ function PullForm({ apps, banners, schedules, prefill, appsApi, bannersApi, pull
       pullCount: Number(pullCount) || 0,
       currencySpent,
       targetItem: targetItem || null,
-      obtained: finalObtained,
+      outcome,                        // 天井の再計算に使う入力値
+      obtained: finalObtained,        // 表示用の結果(天井到達による確定入手を含む)
       lost: finalLost,
       obtainedAtPull: outcome !== 'none' ? atPullValue : null,
       isPityTriggered: pityTriggered,
-      pityBefore: selectedBanner ? (selectedBanner.pityCurrent || 0) : null,      // 削除時の天井復元用
-      guaranteedBefore: selectedBanner ? !!selectedBanner.guaranteed : null,      // 削除時の保証状態復元用
       note: note || null
     })
 
-    await appsApi.update(appId, { currencyBalance: increment(-currencySpent) })
+    // 直近で狙った対象をバナーに覚えさせ、次回の記録時に自動入力する
+    if (selectedBanner && targetItem.trim()) {
+      await bannersApi.update(selectedBanner.id, { lastTarget: targetItem.trim() })
+    }
 
     setSavedMsg(pityTriggered ? '天井到達で確定入手として記録しました'
       : finalLost ? 'すり抜けとして記録しました(次の最高レアは確定扱い)'
@@ -217,7 +229,7 @@ function PullForm({ apps, banners, schedules, prefill, appsApi, bannersApi, pull
 
       {appBanners.length > 0 && (
         <Field label="バナー">
-          <select value={bannerId} onChange={e => setBannerId(e.target.value)} style={inputStyle}>
+          <select value={bannerId} onChange={e => chooseBanner(e.target.value)} style={inputStyle}>
             <option value="">指定しない(天井管理なし)</option>
             {appBanners.map(b => <option key={b.id} value={b.id}>{b.name}({b.costPerPull}{selectedApp?.currencyName || '石'}/回)</option>)}
           </select>
@@ -259,7 +271,16 @@ function PullForm({ apps, banners, schedules, prefill, appsApi, bannersApi, pull
       )}
 
       <Field label="目的のキャラ・アイテム(任意)">
-        <input value={targetItem} onChange={e => setTargetItem(e.target.value)} style={inputStyle} placeholder="例: 水着ver.○○" />
+        <input
+          value={targetItem}
+          onChange={e => setTargetItem(e.target.value)}
+          style={inputStyle}
+          placeholder="例: 水着ver.○○"
+          list="target-suggestions"
+        />
+        <datalist id="target-suggestions">
+          {targetSuggestions.map(t => <option key={t} value={t} />)}
+        </datalist>
       </Field>
 
       <Field label="結果">
@@ -281,10 +302,14 @@ function PullForm({ apps, banners, schedules, prefill, appsApi, bannersApi, pull
       </Field>
 
       {preview && Number(pullCount) > 0 && selectedBanner && (
-        <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-          記録後の天井カウンター: <span className="mono" style={{ color: 'var(--gold)' }}>{preview.pityCurrent} / {selectedBanner.pityMax}</span>
-          {preview.guaranteed && <span style={{ color: 'var(--gold)' }}>(次の最高レアは確定)</span>}
-          {preview.isPityTriggered && <span style={{ color: 'var(--gold)' }}>(天井到達で確定入手扱いになります)</span>}
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', background: 'var(--ink-bg-elevated)', borderRadius: 'var(--radius-sm)', padding: '8px 10px' }}>
+          天井カウンター:{' '}
+          <span className="mono">現在 {selectedBanner.pityCurrent || 0}</span>
+          {' → '}
+          <span className="mono" style={{ color: 'var(--gold)' }}>記録後 {preview.pityCurrent}</span>
+          <span className="mono"> / {selectedBanner.pityMax}</span>
+          {preview.guaranteed && <div style={{ color: 'var(--gold)' }}>次の最高レアは確定になります</div>}
+          {preview.isPityTriggered && <div style={{ color: 'var(--gold)' }}>天井到達で確定入手扱いになります</div>}
         </div>
       )}
 

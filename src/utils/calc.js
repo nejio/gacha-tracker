@@ -1,3 +1,14 @@
+// アプリのバージョン情報(ビルド時に vite.config.js から埋め込まれる)
+export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev'
+export const BUILD_DATE = typeof __BUILD_DATE__ !== 'undefined' ? __BUILD_DATE__ : ''
+
+export function formatBuildDate(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const p2 = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}/${p2(d.getMonth() + 1)}/${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
+}
+
 // ============ 天井(保証)カウンター ============
 
 // outcome: 'none'(何も出ていない) | 'obtained'(目的を入手) | 'lost'(すり抜け)
@@ -34,6 +45,81 @@ export function applyPullToBanner(banner, pulls, outcome, atPullInput = null) {
   }
 
   return { pityCurrent, obtained, lost, guaranteed, isPityTriggered }
+}
+
+// ============ 導出計算(残高・天井を記録から算出) ============
+//
+// 残高と天井カウンターは値を保存せず、常に記録から計算する。
+// これにより記録の削除・編集をしても不整合が起きない。
+//
+// 計算は「チェックポイント(基準時点の状態)＋それ以降の記録」で行う。
+// 現在は開始時点(openingBalance / openingPity)のみをチェックポイントとして使うが、
+// 将来、履歴を分割読み込みする際は「月末時点のスナップショット」を
+// チェックポイントとして渡すだけで、この関数はそのまま使える。
+
+// アプリのチェックポイントを取り出す。将来はスナップショット文書から取得する想定
+export function balanceCheckpoint(app) {
+  return { balance: Number(app.openingBalance) || 0, since: app.openingDate || '' }
+}
+
+// 石残高 = 基準残高 + 基準時点以降の獲得 − 基準時点以降の消費
+export function computeBalance(app, purchases, pulls) {
+  const cp = balanceCheckpoint(app)
+  let balance = cp.balance
+  for (const p of purchases) {
+    if (p.appId === app.id && p.date >= cp.since) balance += Number(p.currencyGained) || 0
+  }
+  for (const p of pulls) {
+    if (p.appId === app.id && p.date >= cp.since) balance -= Number(p.currencySpent) || 0
+  }
+  return balance
+}
+
+// バナーのチェックポイント
+export function pityCheckpoint(banner) {
+  return {
+    pityCurrent: Number(banner.openingPity) || 0,
+    guaranteed: !!banner.openingGuaranteed,
+    since: banner.openingDate || ''
+  }
+}
+
+// 記録に保存された結果種別を取り出す(outcome 未保存の古い記録にも対応)
+export function pullOutcome(pull) {
+  if (pull.outcome) return pull.outcome
+  if (pull.lost) return 'lost'
+  // 天井到達による入手はユーザー入力ではなく計算結果なので、再生時は 'none' として扱う
+  if (pull.obtained && !pull.isPityTriggered) return 'obtained'
+  return 'none'
+}
+
+// 天井カウンター = 基準時点の状態から、記録を古い順に再生した結果
+export function computePity(banner, pulls) {
+  const cp = pityCheckpoint(banner)
+  const related = pulls
+    .filter(p => p.bannerId === banner.id && p.date >= cp.since)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+
+  let state = { pityCurrent: cp.pityCurrent, guaranteed: cp.guaranteed }
+  for (const p of related) {
+    const r = applyPullToBanner(
+      { ...banner, pityCurrent: state.pityCurrent, guaranteed: state.guaranteed },
+      Number(p.pullCount) || 0,
+      pullOutcome(p),
+      p.obtainedAtPull
+    )
+    state = { pityCurrent: r.pityCurrent, guaranteed: r.guaranteed }
+  }
+  return state
+}
+
+// 表示用に、導出値を埋め込んだアプリ/バナーの配列を作る
+export function withDerivedBalance(apps, purchases, pulls) {
+  return apps.map(a => ({ ...a, currencyBalance: computeBalance(a, purchases, pulls) }))
+}
+
+export function withDerivedPity(banners, pulls) {
+  return banners.map(b => ({ ...b, ...computePity(b, pulls) }))
 }
 
 export function pityProgress(banner) {

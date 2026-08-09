@@ -1,28 +1,39 @@
-import { increment } from 'firebase/firestore'
-import { formatYen, formatCurrency } from '../utils/calc'
+import { useState } from 'react'
+import { formatYen, formatCurrency, computePity } from '../utils/calc'
 
-export default function HistoryScreen({ purchases, pulls, apps, purchasesApi, pullsApi, appsApi, bannersApi }) {
+export default function HistoryScreen({ purchases, pulls, apps, banners, purchasesApi, pullsApi }) {
   const nameById = new Map(apps.map(a => [a.id, a.name]))
   const currencyById = new Map(apps.map(a => [a.id, a.currencyName || '石']))
+  const [confirming, setConfirming] = useState(null)
 
-  // 削除時の巻き戻し: 課金削除→残高から獲得分を減算 / ガチャ削除→消費分を残高に戻す
-  // 天井と保証状態は、そのバナーの最新の記録を消す場合のみスナップショットへ復元
-  const removePurchase = async (item) => {
-    await appsApi.update(item.appId, { currencyBalance: increment(-(item.currencyGained || 0)) })
-    await purchasesApi.remove(item.id)
-  }
-
-  const removePull = async (item) => {
-    await appsApi.update(item.appId, { currencyBalance: increment(item.currencySpent || 0) })
-    if (item.bannerId && item.pityBefore != null) {
-      const laterExists = pulls.some(p => p.bannerId === item.bannerId && p.id !== item.id && p.date > item.date)
-      if (!laterExists) {
-        const revert = { pityCurrent: item.pityBefore }
-        if (item.guaranteedBefore != null) revert.guaranteed = item.guaranteedBefore
-        await bannersApi.update(item.bannerId, revert)
+  // 残高・天井は記録から都度計算されるため、削除は記録を消すだけでよい。
+  // ただし削除の影響が分かりにくいので、実行前に変化を提示する。
+  const deleteEffect = (item) => {
+    const app = apps.find(a => a.id === item.appId)
+    const unit = currencyById.get(item.appId) || '石'
+    const lines = []
+    if (item.kind === 'purchase') {
+      lines.push(`残高: ${formatCurrency(app?.currencyBalance || 0, unit)} → ${formatCurrency((app?.currencyBalance || 0) - (item.currencyGained || 0), unit)}`)
+      if (!item.isFree) lines.push(`課金額の集計から ${formatYen(item.amountYen)} が除かれます`)
+    } else {
+      lines.push(`残高: ${formatCurrency(app?.currencyBalance || 0, unit)} → ${formatCurrency((app?.currencyBalance || 0) + (item.currencySpent || 0), unit)}`)
+      const banner = banners?.find(b => b.id === item.bannerId)
+      if (banner) {
+        const after = computePity(banner, pulls.filter(p => p.id !== item.id))
+        lines.push(`天井: ${banner.pityCurrent || 0} → ${after.pityCurrent} / ${banner.pityMax}`)
+        if (!!banner.guaranteed !== after.guaranteed) {
+          lines.push(after.guaranteed ? '「次回確定」が付きます' : '「次回確定」が外れます')
+        }
       }
     }
-    await pullsApi.remove(item.id)
+    return lines
+  }
+
+  const confirmDelete = async () => {
+    const item = confirming
+    setConfirming(null)
+    if (item.kind === 'purchase') await purchasesApi.remove(item.id)
+    else await pullsApi.remove(item.id)
   }
 
   const merged = [
@@ -75,7 +86,7 @@ export default function HistoryScreen({ purchases, pulls, apps, purchasesApi, pu
 
             <div style={{ textAlign: 'right', marginTop: 6 }}>
               <button
-                onClick={() => (item.kind === 'purchase' ? removePurchase(item) : removePull(item))}
+                onClick={() => setConfirming(item)}
                 style={{ fontSize: 11, color: 'var(--danger)' }}
               >
                 削除
@@ -84,6 +95,40 @@ export default function HistoryScreen({ purchases, pulls, apps, purchasesApi, pu
           </div>
         ))}
       </div>
+
+      {confirming && (
+        <div
+          onClick={() => setConfirming(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 200,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24
+          }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{
+            background: 'var(--ink-bg-card)', border: '1px solid var(--line)',
+            borderRadius: 'var(--radius)', padding: 18, maxWidth: 340, width: '100%'
+          }}>
+            <div style={{ fontWeight: 500, marginBottom: 10 }}>この記録を削除しますか?</div>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
+              {deleteEffect(confirming).map((l, i) => <div key={i}>{l}</div>)}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={() => setConfirming(null)}
+                style={{ flex: 1, padding: '11px 0', borderRadius: 'var(--radius-sm)', background: 'var(--ink-bg-elevated)', color: 'var(--text-dim)', fontSize: 14 }}
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={confirmDelete}
+                style={{ flex: 1, padding: '11px 0', borderRadius: 'var(--radius-sm)', background: 'var(--danger)', color: 'var(--ink-bg)', fontWeight: 700, fontSize: 14 }}
+              >
+                削除する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
