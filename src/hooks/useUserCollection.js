@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   collection, onSnapshot, query, orderBy,
-  addDoc, updateDoc, deleteDoc, doc, serverTimestamp
+  addDoc, setDoc, updateDoc, deleteDoc, doc, serverTimestamp
 } from 'firebase/firestore'
 import { db } from '../firebase'
 import { useAuth } from '../contexts/AuthContext'
@@ -24,8 +24,12 @@ export function useUserCollection(collectionName, orderField = 'createdAt') {
   }, [user, collectionName, orderField])
 
   const add = async (data) => addDoc(collection(db, 'users', user.uid, collectionName), { ...data, createdAt: serverTimestamp() })
+
+  // バックアップ復元用。IDを指定して作成し、記録間の参照関係(appId など)を保つ
+  const addWithId = async (id, data) =>
+    setDoc(doc(db, 'users', user.uid, collectionName, id), { ...data, createdAt: serverTimestamp() })
   const update = async (id, data) => updateDoc(doc(db, 'users', user.uid, collectionName, id), data)
   const remove = async (id) => deleteDoc(doc(db, 'users', user.uid, collectionName, id))
 
-  return { items, loading, add, update, remove }
+  return { items, loading, add, addWithId, update, remove }
 }

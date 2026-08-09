@@ -114,7 +114,17 @@ export default function App() {
         )}
 
         {tab === 'manage' && (
-          <ManageScreen apps={apps} appsApi={appsApi} banners={banners} bannersApi={bannersApi} pulls={pullsApi.items} />
+          <ManageScreen
+            apps={apps}
+            appsApi={appsApi}
+            banners={banners}
+            bannersApi={bannersApi}
+            pulls={pullsApi.items}
+            backupApis={{
+              apps: appsApi, banners: bannersApi, purchases: purchasesApi,
+              pulls: pullsApi, schedules: schedulesApi, budgets: budgetsApi
+            }}
+          />
         )}
       </main>
 

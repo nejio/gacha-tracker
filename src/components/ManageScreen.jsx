@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import PityGauge from './PityGauge'
+import BackupSection from './BackupSection'
 import { formatCurrency, formatYen, systemPulls, GAME_PRESETS, APP_VERSION, BUILD_DATE, formatBuildDate } from '../utils/calc'
 
-export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls }) {
+export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls, backupApis }) {
   const [presetKey, setPresetKey] = useState('')
   const [newApp, setNewApp] = useState('')
   const [newCurrencyName, setNewCurrencyName] = useState('石')
@@ -175,6 +176,8 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
           </div>
         ))}
       </div>
+
+      {backupApis && <BackupSection apis={backupApis} />}
 
       <div style={{
         marginTop: 28, paddingTop: 14, borderTop: '1px solid var(--line)',
