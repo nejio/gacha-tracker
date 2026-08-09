@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { formatYen, computePity, gachaConsumptions } from '../utils/calc'
-import { appCurrencies } from '../utils/currency'
+import { appCurrencies, consumptionTag } from '../utils/currency'
 
 const KIND_META = {
   acq: { label: '取得', color: 'var(--gold)', soft: 'var(--gold-soft)' },
@@ -100,13 +100,11 @@ export default function HistoryScreen({
                 {item.kind === 'con' && item.targetItem ? ` ・ ${item.targetItem}` : ''}
               </div>
 
-              {item.kind === 'con' && (item.tags || []).length > 0 && (
+              {item.kind === 'con' && (
                 <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
-                  {item.tags.map(t => (
-                    <span key={t} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, background: 'var(--ink-bg-elevated)', color: 'var(--text-dim)' }}>
-                      {t}
-                    </span>
-                  ))}
+                  <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, background: 'var(--ink-bg-elevated)', color: 'var(--text-dim)' }}>
+                    {consumptionTag(item)}
+                  </span>
                   {item.paidOnly && (
                     <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 999, background: 'var(--gold-soft)', color: 'var(--gold)' }}>
                       有償のみ

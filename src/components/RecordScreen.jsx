@@ -273,7 +273,7 @@ function ExchangeForm({ apps, exchangesApi }) {
 function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersApi, consumptionsApi }) {
   const [appId, setAppId] = useState(prefill?.appId || '')
   const [currencyId, setCurrencyId] = useState('')
-  const [tags, setTags] = useState(prefill ? ['ガチャ'] : [])
+  const [tag, setTag] = useState(prefill ? 'ガチャ' : '')
   const [customTag, setCustomTag] = useState('')
   const [quantity, setQuantity] = useState('')
   const [paidOnly, setPaidOnly] = useState(false)
@@ -289,7 +289,7 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
 
   const app = apps.find(a => a.id === appId)
   const currencies = app ? appCurrencies(app) : []
-  const isGacha = tags.includes('ガチャ')
+  const isGacha = tag === 'ガチャ'
   const appBanners = banners.filter(b => b.appId === appId)
   const appSchedules = (schedules || []).filter(s => s.appId === appId)
   const selectedBanner = banners.find(b => b.id === bannerId)
@@ -328,12 +328,12 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
     setQuantity('')
   }
 
-  const toggleTag = (tag) => setTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag])
-
+  // 消費は「この通貨をこの数量使った」という1つの事実なので、用途は1つだけ選ぶ。
+  // 複数の用途に使った場合は記録を分ける。
   const addCustomTag = () => {
     const t = customTag.trim()
     if (!t) return
-    if (!tags.includes(t)) setTags(prev => [...prev, t])
+    setTag(t)
     setCustomTag('')
   }
 
@@ -345,7 +345,7 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
     e.preventDefault()
     if (!appId) { setErrorMsg('アプリを選択してください'); return }
     if (!currencyId) { setErrorMsg('通貨を選択してください'); return }
-    if (tags.length === 0) { setErrorMsg('用途を1つ以上選んでください'); return }
+    if (!tag) { setErrorMsg('用途を選んでください'); return }
     if (!effectiveQty) { setErrorMsg('消費した数量を入力してください'); return }
     setErrorMsg('')
 
@@ -353,7 +353,7 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
       appId, currencyId,
       date: new Date().toISOString(),
       quantity: effectiveQty,
-      tags, paidOnly,
+      tag, paidOnly,
       note: note || null
     }
 
@@ -406,23 +406,26 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
         </select>
       </Field>
 
-      <Field label="用途(複数選択可)">
+      <Field label="用途">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {tagOptions.map(t => (
             <button
               key={t}
               type="button"
-              onClick={() => toggleTag(t)}
+              onClick={() => setTag(t)}
               style={{
                 padding: '6px 12px', borderRadius: 999, fontSize: 12,
-                border: `1px solid ${tags.includes(t) ? 'var(--gold)' : 'var(--line)'}`,
-                background: tags.includes(t) ? 'var(--gold-soft)' : 'var(--ink-bg-elevated)',
-                color: tags.includes(t) ? 'var(--gold)' : 'var(--text-dim)'
+                border: `1px solid ${tag === t ? 'var(--gold)' : 'var(--line)'}`,
+                background: tag === t ? 'var(--gold-soft)' : 'var(--ink-bg-elevated)',
+                color: tag === t ? 'var(--gold)' : 'var(--text-dim)'
               }}
             >
               {t}
             </button>
           ))}
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 4 }}>
+          複数の用途に使った場合は、用途ごとに分けて記録してください
         </div>
         <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
           <input

@@ -124,9 +124,19 @@ export function withDerivedCurrencies(apps, records) {
   })
 }
 
-// --- 用途別の集計 ---
-// 消費した通貨量を用途タグごとにまとめる。円換算は「相当額」であって支出ではないため、
-// 通貨量を主、金額を従として返す。
+// --- 用途 ---
+// 消費は「この通貨をこの数量使った」という1つの事実なので、用途は1つに限る。
+// 複数の用途に使った場合は記録を分ける。
+// (複数を許すと、数量をどう配分するか決められず、集計が実態とずれるため)
+
+// 記録から用途を取り出す。v1.4.0 の tags 配列にも対応する
+export function consumptionTag(c) {
+  if (c.tag) return c.tag
+  if (Array.isArray(c.tags) && c.tags.length > 0) return c.tags[0]
+  return '未分類'
+}
+
+// 用途別の集計。円換算は「相当額」であって支出ではないため、通貨量を主・金額を従として返す
 export function consumptionByTag(app, consumptions, { since = '', until = '' } = {}) {
   const currencyById = new Map(appCurrencies(app).map(c => [c.id, c]))
   const map = new Map()
@@ -135,35 +145,36 @@ export function consumptionByTag(app, consumptions, { since = '', until = '' } =
     if (c.appId !== app.id) continue
     if (since && c.date < since) continue
     if (until && c.date > until) continue
-    const tags = (c.tags && c.tags.length > 0) ? c.tags : ['未分類']
+
+    const tag = consumptionTag(c)
     const currency = currencyById.get(c.currencyId)
     const qty = Number(c.quantity) || 0
-    // 複数タグが付いている場合は等分して割り当てる
-    const share = qty / tags.length
-    for (const tag of tags) {
-      if (!map.has(tag)) map.set(tag, { tag, byCurrency: new Map(), yen: 0 })
-      const bucket = map.get(tag)
-      const name = currency?.name || '不明'
-      bucket.byCurrency.set(name, (bucket.byCurrency.get(name) || 0) + share)
-      bucket.yen += share * (Number(currency?.yenPerUnit) || 0)
-    }
+
+    if (!map.has(tag)) map.set(tag, { tag, byCurrency: new Map(), yen: 0 })
+    const bucket = map.get(tag)
+    const name = currency?.name || '不明'
+    bucket.byCurrency.set(name, (bucket.byCurrency.get(name) || 0) + qty)
+    bucket.yen += qty * (Number(currency?.yenPerUnit) || 0)
   }
 
   return [...map.values()]
     .map(b => ({
       tag: b.tag,
-      currencies: [...b.byCurrency.entries()].map(([name, qty]) => ({ name, qty: Math.round(qty) })),
+      currencies: [...b.byCurrency.entries()].map(([name, qty]) => ({ name, qty })),
       yenEquivalent: Math.round(b.yen)
     }))
     .sort((a, b) => b.yenEquivalent - a.yenEquivalent)
 }
 
-// 用途タグの初期候補
+// 用途の初期候補
 export const DEFAULT_TAGS = ['ガチャ', 'スタミナ回復', 'パス・月額', '装備・強化', 'その他']
 
-// これまでに使われたタグを候補として集める
+// これまでに使われた用途を候補として集める
 export function usedTags(consumptions) {
   const set = new Set()
-  for (const c of consumptions) for (const t of (c.tags || [])) set.add(t)
+  for (const c of consumptions) {
+    const t = c.tag || (Array.isArray(c.tags) ? c.tags[0] : null)
+    if (t) set.add(t)
+  }
   return [...set]
 }

@@ -13,7 +13,15 @@
 // 移行は1回だけ行い、apps に schemaVersion を立てて再実行を防ぐ。
 // 旧コレクション(purchases / pulls)は削除せず残す。復元の手がかりになるため。
 
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
+
+// v1.4.0 では消費の用途を tags(配列)で保存していたが、
+// 1件の消費に複数の用途が付くと数量の配分が決められず集計が実態とずれるため、
+// v1.4.1 で単一の tag に改めた。既存記録は先頭の用途を採用して変換する。
+export function migrateConsumptionTag(c) {
+  if (c.tag || !Array.isArray(c.tags)) return null
+  return { tag: c.tags[0] || 'その他' }
+}
 
 export function needsMigration(apps) {
   return apps.some(a => (a.schemaVersion || 1) < SCHEMA_VERSION)
@@ -106,7 +114,7 @@ export function migratePull(pull) {
     currencyId: 'main',
     date: pull.date,
     quantity: Number(pull.currencySpent) || 0,
-    tags: ['ガチャ'],
+    tag: 'ガチャ',
     paidOnly: false,
     // ガチャ固有の情報
     bannerId: pull.bannerId || null,
@@ -124,15 +132,31 @@ export function migratePull(pull) {
 }
 
 // 全体の移行を実行する
-export async function runMigration({ apps, banners, purchases, pulls }, apis, { onProgress } = {}) {
+export async function runMigration({ apps, banners, purchases, pulls, consumptions }, apis, { onProgress } = {}) {
   const targets = apps.filter(a => (a.schemaVersion || 1) < SCHEMA_VERSION)
   if (targets.length === 0) return { migrated: 0 }
 
   let done = 0
   const tick = (label) => { done++; onProgress?.(done, label) }
 
+  // v1.4.0 で作られた tags 配列を単一の tag に変換する
+  for (const c of (consumptions || [])) {
+    const patch = migrateConsumptionTag(c)
+    if (patch) {
+      await apis.consumptions.update(c.id, patch)
+      tick('用途を変換')
+    }
+  }
+
   for (const app of targets) {
-    // 1. アプリを新しい通貨定義に更新
+    const alreadyV2 = (app.schemaVersion || 1) >= 2
+
+    // 1. アプリを新しい通貨定義に更新(v2で変換済みならバージョンだけ上げる)
+    if (alreadyV2) {
+      await apis.apps.update(app.id, { schemaVersion: SCHEMA_VERSION })
+      tick(`${app.name} を更新`)
+      continue
+    }
     await apis.apps.update(app.id, migrateApp(app))
     tick(`${app.name} の通貨を設定`)
 

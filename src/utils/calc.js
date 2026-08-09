@@ -125,7 +125,11 @@ export function withDerivedPity(banners, gachaRecords) {
 
 // 消費記録からガチャに該当するものだけ取り出す(天井計算に使う)
 export function gachaConsumptions(consumptions) {
-  return (consumptions || []).filter(c => c.bannerId || (c.tags || []).includes('ガチャ'))
+  return (consumptions || []).filter(c => {
+    if (c.bannerId) return true
+    const tag = c.tag || (Array.isArray(c.tags) ? c.tags[0] : null)
+    return tag === 'ガチャ'
+  })
 }
 
 export function pityProgress(banner) {

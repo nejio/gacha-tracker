@@ -159,7 +159,11 @@ v1.3以前のデータは、初回起動時に自動で新構造へ変換され�
 - `purchases` → `acquisitions`。2通貨制の課金は「課金通貨の取得」+「ガチャ通貨への交換」の2件に分解
 - `pulls` → `consumptions`(用途タグ「ガチャ」付き)。天井情報はそのまま保持
 
+v1.4.0 では用途を `tags` 配列で保存していたが、v1.4.1 で単一の `tag` に改めた。
+既存記録は先頭の用途を採用して変換する(`migrateConsumptionTag`)。
+
 移行済みかどうかは `apps.schemaVersion` で判定し、1回だけ実行される。
+既に v2 まで変換済みのアプリは、記録の再変換をせずバージョンだけ上げる。
 旧コレクション(`purchases` / `pulls`)は削除せずに残す。
 
 移行前後で課金額の合計が変わらないことをテストで確認している。
@@ -208,10 +212,14 @@ apps/{appId}
 |---|---|---|
 | `acquisitions` | 取得(課金・無償) | `currencyId, amountYen, isFree, quantity` |
 | `exchanges` | 交換(通貨A→通貨B) | `fromCurrencyId, fromQty, toCurrencyId, toQty` |
-| `consumptions` | 消費(用途タグ付き) | `currencyId, quantity, tags[], paidOnly` |
+| `consumptions` | 消費(用途つき) | `currencyId, quantity, tag, paidOnly` |
 
-ガチャは「用途タグがガチャの消費」として扱う。`bannerId` や `outcome` などのガチャ固有の
+ガチャは「用途がガチャの消費」として扱う。`bannerId` や `outcome` などのガチャ固有の
 情報が付随し、天井計算に使われる。
+
+**用途は1つだけ**。消費は「この通貨をこの数量使った」という1つの事実であり、
+複数の用途を許すと数量をどう配分するか決められず、集計が実態とずれるため。
+複数の用途に使った場合は記録を分ける。
 
 ### 有償・無償の扱い
 

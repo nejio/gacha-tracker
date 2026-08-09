@@ -40,20 +40,20 @@ export default function App() {
   // 旧構造から新構造への移行(1回だけ実行される)
   useEffect(() => {
     if (!user) return
-    if (appsApi.loading || purchasesApi.loading || pullsApi.loading || bannersApi.loading) return
+    if (appsApi.loading || purchasesApi.loading || pullsApi.loading || bannersApi.loading || consumptionsApi.loading) return
     if (appsApi.items.length === 0) return
     if (!needsMigration(appsApi.items)) return
     if (migrating) return
 
     setMigrating({ done: 0, label: '準備中' })
     runMigration(
-      { apps: appsApi.items, banners: bannersApi.items, purchases: purchasesApi.items, pulls: pullsApi.items },
+      { apps: appsApi.items, banners: bannersApi.items, purchases: purchasesApi.items, pulls: pullsApi.items, consumptions: consumptionsApi.items },
       { apps: appsApi, banners: bannersApi, acquisitions: acquisitionsApi, exchanges: exchangesApi, consumptions: consumptionsApi },
       { onProgress: (done, label) => setMigrating({ done, label }) }
     )
       .then(() => setMigrating(null))
       .catch(err => setMigrating({ error: err.message }))
-  }, [user, appsApi.loading, purchasesApi.loading, pullsApi.loading, bannersApi.loading, appsApi.items])
+  }, [user, appsApi.loading, purchasesApi.loading, pullsApi.loading, bannersApi.loading, consumptionsApi.loading, appsApi.items])
 
   const records = useMemo(() => ({
     acquisitions: acquisitionsApi.items,
