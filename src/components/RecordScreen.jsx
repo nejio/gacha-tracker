@@ -49,12 +49,19 @@ function PurchaseForm({ apps, appsApi, purchasesApi }) {
   const [appId, setAppId] = useState('')
   const [isFree, setIsFree] = useState(false)
   const [amountYen, setAmountYen] = useState('')
-  const [currencyGained, setCurrencyGained] = useState('')
+  const [purchaseUnits, setPurchaseUnits] = useState('')   // 課金通貨(例: 展延源石)の購入数
+  const [gainedOverride, setGainedOverride] = useState('') // ガチャ通貨の数を手で上書きする場合
   const [note, setNote] = useState('')
   const [savedMsg, setSavedMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
 
   const selectedApp = apps.find(a => a.id === appId)
+
+  // 2通貨制のゲーム(例: エンドフィールド)は、課金通貨の購入数からガチャ通貨を自動換算する
+  const twoStep = !!selectedApp?.purchaseCurrencyName
+  const rate = Number(selectedApp?.currencyPerPurchaseUnit) || 0
+  const autoGained = twoStep ? (Number(purchaseUnits) || 0) * rate : 0
+  const currencyGained = gainedOverride !== '' ? Number(gainedOverride) : (twoStep ? autoGained : '')
 
   const submit = async (e) => {
     e.preventDefault()
@@ -69,11 +76,13 @@ function PurchaseForm({ apps, appsApi, purchasesApi }) {
       amountYen: isFree ? 0 : Number(amountYen),
       isFree,
       currencyGained: Number(currencyGained),
+      purchaseUnits: twoStep ? (Number(purchaseUnits) || null) : null,
+      purchaseCurrencyName: twoStep ? selectedApp.purchaseCurrencyName : null,
       note: note || null
     })
 
     setSavedMsg(`${formatCurrency(Number(currencyGained), selectedApp?.currencyName || '石')} を追加しました`)
-    setAmountYen(''); setCurrencyGained(''); setNote(''); setIsFree(false)
+    setAmountYen(''); setPurchaseUnits(''); setGainedOverride(''); setNote(''); setIsFree(false)
     setTimeout(() => setSavedMsg(''), 2500)
   }
 
@@ -105,8 +114,22 @@ function PurchaseForm({ apps, appsApi, purchasesApi }) {
         </Field>
       )}
 
-      <Field label={`獲得した${selectedApp?.currencyName || '石'}の数`}>
-        <input type="number" inputMode="numeric" value={currencyGained} onChange={e => setCurrencyGained(e.target.value)} style={inputStyle} />
+      {twoStep && (
+        <Field label={`購入した${selectedApp.purchaseCurrencyName}の数`}>
+          <input type="number" inputMode="numeric" value={purchaseUnits} onChange={e => { setPurchaseUnits(e.target.value); setGainedOverride('') }} style={inputStyle} />
+        </Field>
+      )}
+
+      <Field label={twoStep
+        ? `交換した${selectedApp.currencyName}の数(${selectedApp.purchaseCurrencyName}1個 = ${rate}${selectedApp.currencyName}で自動計算・修正可)`
+        : `獲得した${selectedApp?.currencyName || '石'}の数`}>
+        <input
+          type="number"
+          inputMode="numeric"
+          value={gainedOverride !== '' ? gainedOverride : (twoStep ? (autoGained || '') : '')}
+          onChange={e => setGainedOverride(e.target.value)}
+          style={inputStyle}
+        />
       </Field>
 
       <Field label="メモ(任意)">

@@ -71,6 +71,7 @@ export default function HistoryScreen({ purchases, pulls, apps, banners, purchas
 
             <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
               {new Date(item.date).toLocaleDateString('ja-JP')}
+              {item.kind === 'purchase' && item.purchaseUnits ? ` ・ ${item.purchaseCurrencyName}${item.purchaseUnits}個` : ''}
               {item.kind === 'purchase' && item.currencyGained ? ` ・ +${formatCurrency(item.currencyGained, currencyById.get(item.appId))}` : ''}
               {item.kind === 'pull' && item.pullCount ? ` ・ ${item.pullCount}連` : ''}
               {item.kind === 'pull' && item.targetItem ? ` ・ ${item.targetItem}` : ''}

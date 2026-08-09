@@ -414,10 +414,14 @@ export const GAME_PRESETS = [
     ]
   },
   {
-    key: 'endfield', name: 'アークナイツ:エンドフィールド', currencyName: 'オリジニウム', yenPerCurrency: 1.85, verified: true,
+    // 2通貨制: 課金で「展延源石」を買い、1個を「赤晶石」75個に交換してガチャに使う
+    // 源石交換所は1万円でおよそ29回分のため、展延源石1個あたり約52円(赤晶石1個あたり約0.69円)
+    key: 'endfield', name: 'アークナイツ:エンドフィールド',
+    currencyName: '赤晶石', yenPerCurrency: 0.69, verified: true,
+    purchaseCurrencyName: '展延源石', currencyPerPurchaseUnit: 75,
     banners: [
-      // 80連で★6確定(引き継ぎあり)、120連でPU確定(引き継ぎなし)
-      { name: '特別スカウト(限定PU)', costPerPull: 160, pityMax: 120,
+      // 80連で★6確定(引き継ぎあり)、120連でPU確定(引き継ぎなし)。1回500赤晶石
+      { name: '特別スカウト(限定PU)', costPerPull: 500, pityMax: 120,
         system: { type: 'fiftyFifty', baseRate: 0.8, softPityStart: 66, softPityInc: 5, hardPity: 80, featuredRate: 50, guarantee: true, maxPullsOverride: 120 } }
     ]
   },

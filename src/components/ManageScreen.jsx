@@ -33,7 +33,10 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
       currencyName: newCurrencyName.trim() || '石',
       openingBalance: Number(newOpeningBalance) || 0,   // 記録開始時点の残高(ここを直すと全体が再計算される)
       openingDate: new Date().toISOString(),
-      yenPerCurrency: Number(newYenRate) || 0
+      yenPerCurrency: Number(newYenRate) || 0,
+      // 2通貨制のゲームのみ設定される(課金通貨 → ガチャ通貨の換算)
+      purchaseCurrencyName: preset?.purchaseCurrencyName || null,
+      currencyPerPurchaseUnit: preset?.currencyPerPurchaseUnit || null
     })
     if (preset) {
       for (const b of preset.banners) {
@@ -81,6 +84,11 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
 
         {preset && (
           <div style={{ background: 'var(--ink-bg-elevated)', borderRadius: 'var(--radius-sm)', padding: 12, fontSize: 11, color: 'var(--text-dim)' }}>
+            {preset.purchaseCurrencyName && (
+              <div style={{ marginBottom: 6, color: 'var(--teal)' }}>
+                課金で{preset.purchaseCurrencyName}を購入し、1個を{preset.currencyName}{preset.currencyPerPurchaseUnit}個に交換して使うゲームです
+              </div>
+            )}
             <div style={{ marginBottom: 6, color: 'var(--gold)' }}>以下のバナーも自動作成されます</div>
             {preset.banners.map(b => {
               const r = systemPulls(b.system)
@@ -140,6 +148,18 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
                   />
                   円(予算計画の換算に使用)
                 </div>
+                {app.purchaseCurrencyName && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 11, color: 'var(--text-dim)', flexWrap: 'wrap' }}>
+                    {app.purchaseCurrencyName}1個 =
+                    <input
+                      type="number"
+                      value={app.currencyPerPurchaseUnit ?? ''}
+                      onChange={e => appsApi.update(app.id, { currencyPerPurchaseUnit: e.target.value === '' ? null : Number(e.target.value) })}
+                      style={{ ...inputStyle, width: 60, padding: '4px 6px', fontSize: 11, flex: 'none' }}
+                    />
+                    {app.currencyName || '石'}
+                  </div>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 12 }}>
                 <button onClick={() => setExpandedAppId(expandedAppId === app.id ? null : app.id)} style={linkBtnStyle}>
