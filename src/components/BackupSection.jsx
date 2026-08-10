@@ -5,7 +5,7 @@ import { APP_VERSION } from '../utils/calc'
 const LABELS = {
   apps: 'アプリ', banners: 'バナー', purchases: '課金記録', pulls: 'ガチャ記録',
   schedules: 'ガチャ予定', budgets: '月次予算',
-  acquisitions: '取得記録', exchanges: '交換記録', consumptions: '消費記録'
+  acquisitions: '取得記録', exchanges: '交換記録', consumptions: '消費記録', adjustments: '残高の記録'
 }
 
 export default function BackupSection({ apis }) {

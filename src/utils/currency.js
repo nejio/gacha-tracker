@@ -73,7 +73,15 @@ export function computeCurrencyBalances(app, records) {
   for (const r of (records.consumptions || [])) {
     if (r.appId === app.id && r.date >= since) events.push({ ...r, _type: 'con' })
   }
-  events.sort((a, b) => String(a.date).localeCompare(String(b.date)))
+  // 残高の実測による調整。同じ日時なら他の記録より後に適用する(実測は結果だから)
+  for (const r of (records.adjustments || [])) {
+    if (r.appId === app.id && r.date >= since) events.push({ ...r, _type: 'adj' })
+  }
+  events.sort((a, b) => {
+    const c = String(a.date).localeCompare(String(b.date))
+    if (c !== 0) return c
+    return (a._type === 'adj' ? 1 : 0) - (b._type === 'adj' ? 1 : 0)
+  })
 
   for (const e of events) {
     if (e._type === 'acq') {
@@ -87,6 +95,17 @@ export function computeCurrencyBalances(app, records) {
       if (!pool) continue
       const drawn = drawFromPool(pool, e.quantity, e.paidOnly)
       balances[e.currencyId] = drawn.next
+    } else if (e._type === 'adj') {
+      // 実測残高に合わせる。差分が増えていれば無償入手、減っていればガチャ以外の消費とみなす
+      const pool = balances[e.currencyId]
+      if (!pool) continue
+      const observed = Number(e.observedTotal) || 0
+      const diff = observed - poolTotal(pool)
+      if (diff > 0) {
+        pool.free += diff
+      } else if (diff < 0) {
+        balances[e.currencyId] = drawFromPool(pool, -diff).next
+      }
     } else if (e._type === 'exc') {
       const from = balances[e.fromCurrencyId]
       const to = balances[e.toCurrencyId]
@@ -137,7 +156,11 @@ export function consumptionTag(c) {
 }
 
 // 用途別の集計。円換算は「相当額」であって支出ではないため、通貨量を主・金額を従として返す
-export function consumptionByTag(app, consumptions, { filterMonth = null } = {}) {
+export const UNKNOWN_TAG = '使途不明'
+
+// 用途別の集計。records を渡すと、残高の実測で判明した記録漏れの消費を
+// 「使途不明」として合流させる(課金した資産が集計から抜け落ちないようにするため)
+export function consumptionByTag(app, consumptions, { filterMonth = null, records = null } = {}) {
   const currencyById = new Map(appCurrencies(app).map(c => [c.id, c]))
   const map = new Map()
 
@@ -156,6 +179,22 @@ export function consumptionByTag(app, consumptions, { filterMonth = null } = {})
     bucket.yen += qty * (Number(currency?.yenPerUnit) || 0)
     bucket.count += 1
     bucket.pulls += Number(c.pullCount) || 0
+  }
+
+  // 残高の実測で判明した、記録されていない消費を「使途不明」としてまとめる
+  if (records) {
+    for (const d of adjustmentDiffs(app, records)) {
+      if (d.diff >= 0) continue
+      if (filterMonth && !inMonth(d.date, filterMonth.year, filterMonth.month)) continue
+      const currency = currencyById.get(d.currencyId)
+      const qty = -d.diff
+      if (!map.has(UNKNOWN_TAG)) map.set(UNKNOWN_TAG, { tag: UNKNOWN_TAG, byCurrency: new Map(), yen: 0, count: 0, pulls: 0 })
+      const bucket = map.get(UNKNOWN_TAG)
+      const name = currency?.name || '不明'
+      bucket.byCurrency.set(name, (bucket.byCurrency.get(name) || 0) + qty)
+      bucket.yen += qty * (Number(currency?.yenPerUnit) || 0)
+      bucket.count += 1
+    }
   }
 
   return [...map.values()]
@@ -183,6 +222,36 @@ export function monthRange(year, month) {
 export function inMonth(isoDate, year, month) {
   const d = new Date(isoDate)
   return d.getFullYear() === year && d.getMonth() === month
+}
+
+// 残高の実測時点で生じた差分を求める。
+// プラスなら記録されていない無償入手、マイナスなら記録されていない消費(使途不明)。
+export function adjustmentDiffs(app, records) {
+  const out = []
+  const adjustments = (records.adjustments || [])
+    .filter(a => a.appId === app.id)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+
+  for (const adj of adjustments) {
+    // その調整の直前までの記録で残高を求める
+    const before = computeCurrencyBalances(app, {
+      acquisitions: (records.acquisitions || []).filter(r => r.date < adj.date),
+      exchanges: (records.exchanges || []).filter(r => r.date < adj.date),
+      consumptions: (records.consumptions || []).filter(r => r.date < adj.date),
+      adjustments: adjustments.filter(a => a.date < adj.date)
+    })
+    const expected = poolTotal(before[adj.currencyId])
+    const observed = Number(adj.observedTotal) || 0
+    out.push({
+      id: adj.id,
+      date: adj.date,
+      currencyId: adj.currencyId,
+      expected,
+      observed,
+      diff: observed - expected
+    })
+  }
+  return out
 }
 
 // 用途の初期候補

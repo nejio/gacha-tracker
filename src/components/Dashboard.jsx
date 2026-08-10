@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, ResponsiveContainer, Tooltip } from 'recharts'
 import { totalAmount, monthlyTotal, currentMonthKey, monthlySeries, totalsByApp, formatYen } from '../utils/calc'
 import { consumptionByTag, poolTotal, inMonth } from '../utils/currency'
 
-export default function Dashboard({ acquisitions, consumptions, apps }) {
+export default function Dashboard({ acquisitions, consumptions, apps, records }) {
   const thisMonth = currentMonthKey()
   // 支出が発生するのは課金した時点。消費・交換は課金額に一切関与しない
   const monthSum = useMemo(() => monthlyTotal(acquisitions, thisMonth), [acquisitions, thisMonth])
@@ -56,7 +56,7 @@ export default function Dashboard({ acquisitions, consumptions, apps }) {
       </Section>
 
       <BalanceSection apps={apps} />
-      <UsageSection apps={apps} consumptions={consumptions} acquisitions={acquisitions} />
+      <UsageSection apps={apps} consumptions={consumptions} acquisitions={acquisitions} records={records} />
     </div>
   )
 }
@@ -104,7 +104,7 @@ function BalanceSection({ apps }) {
 }
 
 // 用途別の内訳。金額は「相当額」であって支出ではないため、通貨量を主として見せる
-function UsageSection({ apps, consumptions, acquisitions }) {
+function UsageSection({ apps, consumptions, acquisitions, records }) {
   const now = new Date()
   const [scope, setScope] = useState('month')   // month | all
   const [appId, setAppId] = useState('all')
@@ -115,12 +115,12 @@ function UsageSection({ apps, consumptions, acquisitions }) {
   const rows = useMemo(() => {
     const all = []
     for (const app of targetApps) {
-      for (const r of consumptionByTag(app, consumptions, { filterMonth })) {
+      for (const r of consumptionByTag(app, consumptions, { filterMonth, records })) {
         all.push({ ...r, appName: app.name, key: `${app.id}-${r.tag}` })
       }
     }
     return all.sort((a, b) => b.yenEquivalent - a.yenEquivalent)
-  }, [targetApps, consumptions, scope])
+  }, [targetApps, consumptions, scope, records])
 
   const totalYen = rows.reduce((s, r) => s + r.yenEquivalent, 0)
   const max = rows.reduce((m, r) => Math.max(m, r.yenEquivalent), 0)

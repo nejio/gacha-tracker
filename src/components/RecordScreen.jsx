@@ -3,17 +3,24 @@ import PityGauge from './PityGauge'
 import { applyPullToBanner } from '../utils/calc'
 import { appCurrencies, poolTotal, DEFAULT_TAGS, usedTags } from '../utils/currency'
 
-const SUB_TABS = [
-  { key: 'acquire', label: '取得' },
-  { key: 'exchange', label: '交換' },
-  { key: 'consume', label: '消費' }
+// 多くの人が意識するのは「課金する時」と「ガチャを引く時」の2つなので、
+// その2つを主軸に置き、それ以外の記録は任意の詳細として控えめに配置する
+const MAIN_TABS = [
+  { key: 'acquire', label: '課金する' },
+  { key: 'gacha', label: 'ガチャを引く' }
+]
+const OTHER_TABS = [
+  { key: 'free', label: '無償で受け取る' },
+  { key: 'exchange', label: '交換する' },
+  { key: 'other', label: 'その他に使う' }
 ]
 
 export default function RecordScreen({
   apps, banners, schedules, prefill, consumptions,
-  bannersApi, acquisitionsApi, exchangesApi, consumptionsApi
+  bannersApi, acquisitionsApi, exchangesApi, consumptionsApi, adjustmentsApi
 }) {
-  const [subTab, setSubTab] = useState(prefill ? 'consume' : 'acquire')
+  const [subTab, setSubTab] = useState(prefill ? 'gacha' : 'acquire')
+  const [showOther, setShowOther] = useState(false)
 
   if (apps.length === 0) {
     return (
@@ -26,15 +33,16 @@ export default function RecordScreen({
   return (
     <div>
       <div style={{ display: 'flex', gap: 8, padding: '20px 16px 0' }}>
-        {SUB_TABS.map(t => (
+        {MAIN_TABS.map(t => (
           <button
             key={t.key}
-            onClick={() => setSubTab(t.key)}
+            onClick={() => { setSubTab(t.key); setShowOther(false) }}
             style={{
-              flex: 1, padding: '10px 0', fontSize: 13, borderRadius: 'var(--radius-sm)',
+              flex: 1, padding: '13px 0', fontSize: 14, borderRadius: 'var(--radius-sm)',
               background: subTab === t.key ? 'var(--gold-soft)' : 'var(--ink-bg-elevated)',
               color: subTab === t.key ? 'var(--gold)' : 'var(--text-dim)',
-              fontWeight: subTab === t.key ? 700 : 400
+              fontWeight: subTab === t.key ? 700 : 400,
+              border: `1px solid ${subTab === t.key ? 'var(--gold)' : 'transparent'}`
             }}
           >
             {t.label}
@@ -42,13 +50,85 @@ export default function RecordScreen({
         ))}
       </div>
 
-      {subTab === 'acquire' && <AcquireForm apps={apps} acquisitionsApi={acquisitionsApi} />}
+      <div style={{ padding: '10px 16px 0' }}>
+        <button
+          onClick={() => setShowOther(v => !v)}
+          style={{ fontSize: 11, color: 'var(--text-faint)' }}
+        >
+          その他の記録 {showOther ? '▲' : '▼'}
+        </button>
+        {showOther && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            {OTHER_TABS.map(t => (
+              <button
+                key={t.key}
+                onClick={() => setSubTab(t.key)}
+                style={{
+                  flex: 1, padding: '8px 0', fontSize: 11, borderRadius: 'var(--radius-sm)',
+                  background: subTab === t.key ? 'var(--teal-soft)' : 'var(--ink-bg-elevated)',
+                  color: subTab === t.key ? 'var(--teal)' : 'var(--text-dim)'
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {subTab === 'acquire' && <AcquireForm apps={apps} acquisitionsApi={acquisitionsApi} adjustmentsApi={adjustmentsApi} isFreeMode={false} />}
+      {subTab === 'free' && <AcquireForm apps={apps} acquisitionsApi={acquisitionsApi} adjustmentsApi={adjustmentsApi} isFreeMode={true} />}
       {subTab === 'exchange' && <ExchangeForm apps={apps} exchangesApi={exchangesApi} />}
-      {subTab === 'consume' && (
+      {(subTab === 'gacha' || subTab === 'other') && (
         <ConsumeForm
+          key={subTab}
           apps={apps} banners={banners} schedules={schedules} prefill={prefill}
           consumptions={consumptions} bannersApi={bannersApi} consumptionsApi={consumptionsApi}
+          adjustmentsApi={adjustmentsApi}
+          gachaMode={subTab === 'gacha'}
         />
+      )}
+    </div>
+  )
+}
+
+// 実際の残高を入力してもらい、計算値とのズレを自動で埋める。
+// 無償石は配布機会が多く毎回の記録は現実的でないため、
+// ゲーム画面で必ず目にする残高を「答え合わせ」として使う。入力は任意。
+function BalanceCheck({ app, currencyId, value, onChange }) {
+  if (!app || !currencyId) return null
+  const c = (app.currencies || []).find(x => x.id === currencyId)
+  if (!c) return null
+  const expected = c.total ?? poolTotal(c.balance)
+  const observed = value === '' ? null : Number(value)
+  const diff = observed == null ? null : observed - expected
+
+  return (
+    <div style={{ background: 'var(--ink-bg-elevated)', borderRadius: 'var(--radius-sm)', padding: '10px 12px' }}>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--text-dim)' }}>
+        今の{c.name}の残高(任意)
+        <input
+          type="number"
+          inputMode="numeric"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={`計算上は ${expected.toLocaleString('ja-JP')}`}
+          style={inputStyle}
+        />
+      </label>
+      {diff != null && diff !== 0 && (
+        <div style={{ fontSize: 11, marginTop: 6, color: diff > 0 ? 'var(--teal)' : 'var(--gold)' }}>
+          計算上の {expected.toLocaleString('ja-JP')} との差 {diff > 0 ? '+' : ''}{diff.toLocaleString('ja-JP')} を
+          {diff > 0 ? '「無償で受け取った分」' : '「記録していない消費」'}として自動で補います
+        </div>
+      )}
+      {diff === 0 && (
+        <div style={{ fontSize: 11, marginTop: 6, color: 'var(--text-faint)' }}>計算上の残高と一致しています</div>
+      )}
+      {observed == null && (
+        <div style={{ fontSize: 10, marginTop: 6, color: 'var(--text-faint)', lineHeight: 1.6 }}>
+          入力すると、記録していない無償入手や消費が自動で補われ、残高が実態に合います
+        </div>
       )}
     </div>
   )
@@ -71,12 +151,13 @@ function BalanceNote({ app, currencyId }) {
 }
 
 // ============ 取得(課金または無償で通貨を得る) ============
-function AcquireForm({ apps, acquisitionsApi }) {
+function AcquireForm({ apps, acquisitionsApi, adjustmentsApi, isFreeMode }) {
   const [appId, setAppId] = useState('')
   const [currencyId, setCurrencyId] = useState('')
-  const [isFree, setIsFree] = useState(false)
+  const isFree = !!isFreeMode
   const [amountYen, setAmountYen] = useState('')
   const [quantity, setQuantity] = useState('')
+  const [observed, setObserved] = useState('')
   const [note, setNote] = useState('')
   const [savedMsg, setSavedMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
@@ -100,18 +181,23 @@ function AcquireForm({ apps, acquisitionsApi }) {
     if (!quantity) { setErrorMsg('数量を入力してください'); return }
     setErrorMsg('')
 
+    const now = new Date().toISOString()
     await acquisitionsApi.add({
       appId, currencyId,
-      date: new Date().toISOString(),
+      date: now,
       amountYen: isFree ? 0 : Number(amountYen),
       isFree,
       quantity: Number(quantity),
       note: note || null
     })
+    // 残高が入力されていれば、その時点の実測値として記録する
+    if (observed !== '') {
+      await adjustmentsApi.add({ appId, currencyId, date: now, observedTotal: Number(observed) })
+    }
 
     const cname = currencies.find(c => c.id === currencyId)?.name || ''
     setSavedMsg(`${Number(quantity).toLocaleString('ja-JP')}${cname} を追加しました`)
-    setAmountYen(''); setQuantity(''); setNote(''); setIsFree(false)
+    setAmountYen(''); setQuantity(''); setObserved(''); setNote('')
     setTimeout(() => setSavedMsg(''), 2500)
   }
 
@@ -119,7 +205,11 @@ function AcquireForm({ apps, acquisitionsApi }) {
 
   return (
     <form onSubmit={submit} style={formStyle}>
-      <p style={hintStyle}>課金して通貨を買った、またはログインボーナスなどで無償で受け取ったときに記録します。</p>
+      <p style={hintStyle}>
+        {isFree
+          ? 'ログインボーナスや配布などで無償に受け取ったときに記録します。毎回記録しなくても、ガチャを引くときに残高を入力すれば自動で補われます。'
+          : '課金して通貨を買ったときに記録します。ここに入力した金額が課金額として集計されます。'}
+      </p>
 
       <Field label="アプリ">
         <select value={appId} onChange={e => chooseApp(e.target.value)} style={inputStyle}>
@@ -138,11 +228,6 @@ function AcquireForm({ apps, acquisitionsApi }) {
 
       <BalanceNote app={app} currencyId={currencyId} />
 
-      <label style={checkStyle}>
-        <input type="checkbox" checked={isFree} onChange={e => setIsFree(e.target.checked)} />
-        無償で獲得(ログインボーナス・配布・クエスト報酬など)
-      </label>
-
       {!isFree && (
         <Field label="課金額(円)">
           <input type="number" inputMode="numeric" value={amountYen} onChange={e => setAmountYen(e.target.value)} style={inputStyle} />
@@ -152,6 +237,8 @@ function AcquireForm({ apps, acquisitionsApi }) {
       <Field label={`獲得した数量${cname ? `(${cname})` : ''}`}>
         <input type="number" inputMode="numeric" value={quantity} onChange={e => setQuantity(e.target.value)} style={inputStyle} />
       </Field>
+
+      <BalanceCheck app={app} currencyId={currencyId} value={observed} onChange={setObserved} />
 
       <Field label="メモ(任意)">
         <textarea value={note} onChange={e => setNote(e.target.value)} style={{ ...inputStyle, minHeight: 50, resize: 'vertical' }} />
@@ -270,14 +357,15 @@ function ExchangeForm({ apps, exchangesApi }) {
 }
 
 // ============ 消費(通貨を使う。ガチャもこの一形態) ============
-function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersApi, consumptionsApi }) {
+function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersApi, consumptionsApi, adjustmentsApi, gachaMode }) {
   const [appId, setAppId] = useState(prefill?.appId || '')
   const [currencyId, setCurrencyId] = useState('')
-  const [tag, setTag] = useState(prefill ? 'ガチャ' : '')
+  const [tag, setTag] = useState(gachaMode ? 'ガチャ' : '')
   const [customTag, setCustomTag] = useState('')
   const [quantity, setQuantity] = useState('')
   const [paidOnly, setPaidOnly] = useState(false)
   const [note, setNote] = useState('')
+  const [observed, setObserved] = useState('')
   const [bannerId, setBannerId] = useState('')
   const [scheduleId, setScheduleId] = useState(prefill?.scheduleId || '')
   const [pullCount, setPullCount] = useState(10)
@@ -289,7 +377,7 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
 
   const app = apps.find(a => a.id === appId)
   const currencies = app ? appCurrencies(app) : []
-  const isGacha = tag === 'ガチャ'
+  const isGacha = !!gachaMode || tag === 'ガチャ'
   const appBanners = banners.filter(b => b.appId === appId)
   const appSchedules = (schedules || []).filter(s => s.appId === appId)
   const selectedBanner = banners.find(b => b.id === bannerId)
@@ -338,22 +426,24 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
   }
 
   const reset = () => {
-    setQuantity(''); setNote(''); setPullCount(10); setOutcome('none'); setAtPull(''); setPaidOnly(false)
+    setQuantity(''); setNote(''); setObserved(''); setPullCount(10); setOutcome('none'); setAtPull(''); setPaidOnly(false)
   }
 
   const submit = async (e) => {
     e.preventDefault()
     if (!appId) { setErrorMsg('アプリを選択してください'); return }
     if (!currencyId) { setErrorMsg('通貨を選択してください'); return }
-    if (!tag) { setErrorMsg('用途を選んでください'); return }
+    if (!isGacha && !tag) { setErrorMsg('用途を選んでください'); return }
     if (!effectiveQty) { setErrorMsg('消費した数量を入力してください'); return }
     setErrorMsg('')
 
+    const now = new Date().toISOString()
     const record = {
       appId, currencyId,
-      date: new Date().toISOString(),
+      date: now,
       quantity: effectiveQty,
-      tag, paidOnly,
+      tag: isGacha ? 'ガチャ' : tag,
+      paidOnly,
       note: note || null
     }
 
@@ -389,6 +479,10 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
     }
 
     await consumptionsApi.add(record)
+    // 残高が入力されていれば、消費を反映した後の実測値として記録する
+    if (observed !== '') {
+      await adjustmentsApi.add({ appId, currencyId, date: now, observedTotal: Number(observed) })
+    }
     reset()
     setTimeout(() => setSavedMsg(''), 2500)
   }
@@ -397,7 +491,11 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
 
   return (
     <form onSubmit={submit} style={formStyle}>
-      <p style={hintStyle}>通貨を使ったときに記録します。用途に「ガチャ」を選ぶと、天井カウンターの入力欄が出ます。</p>
+      <p style={hintStyle}>
+        {gachaMode
+          ? 'ガチャを引いたときに記録します。残高を入力しておくと、記録していない無償入手や消費が自動で補われます。'
+          : 'ガチャ以外で通貨を使ったときに記録します。'}
+      </p>
 
       <Field label="アプリ">
         <select value={appId} onChange={e => chooseApp(e.target.value)} style={inputStyle}>
@@ -406,6 +504,7 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
         </select>
       </Field>
 
+      {!gachaMode && (
       <Field label="用途">
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {tagOptions.map(t => (
@@ -438,6 +537,7 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
           <button type="button" onClick={addCustomTag} style={tealBtnStyle}>＋</button>
         </div>
       </Field>
+      )}
 
       {currencies.length > 1 && (
         <Field label="使った通貨">
@@ -487,6 +587,8 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
         <input type="checkbox" checked={paidOnly} onChange={e => setPaidOnly(e.target.checked)} />
         有償の通貨のみで消費(有償限定ガチャなど)
       </label>
+
+      <BalanceCheck app={app} currencyId={currencyId} value={observed} onChange={setObserved} />
 
       {isGacha && (
         <>

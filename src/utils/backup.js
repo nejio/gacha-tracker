@@ -6,7 +6,7 @@
 // 書き出し対象のコレクション。構造を変えたらここも合わせる
 export const BACKUP_COLLECTIONS = [
   'apps', 'banners', 'purchases', 'pulls', 'schedules', 'budgets',
-  'acquisitions', 'exchanges', 'consumptions'
+  'acquisitions', 'exchanges', 'consumptions', 'adjustments'
 ]
 
 // Firestore の serverTimestamp などをそのままJSONにできない場合に備えて整形する

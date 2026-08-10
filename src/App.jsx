@@ -36,6 +36,7 @@ export default function App() {
   const acquisitionsApi = useUserCollection('acquisitions', 'date')
   const exchangesApi = useUserCollection('exchanges', 'date')
   const consumptionsApi = useUserCollection('consumptions', 'date')
+  const adjustmentsApi = useUserCollection('adjustments', 'date')   // 残高の実測による差分調整
 
   // 旧構造から新構造への移行(1回だけ実行される)
   useEffect(() => {
@@ -58,8 +59,9 @@ export default function App() {
   const records = useMemo(() => ({
     acquisitions: acquisitionsApi.items,
     exchanges: exchangesApi.items,
-    consumptions: consumptionsApi.items
-  }), [acquisitionsApi.items, exchangesApi.items, consumptionsApi.items])
+    consumptions: consumptionsApi.items,
+    adjustments: adjustmentsApi.items
+  }), [acquisitionsApi.items, exchangesApi.items, consumptionsApi.items, adjustmentsApi.items])
 
   // 残高・天井は保存せず、記録から毎回計算する
   const apps = useMemo(() => withDerivedCurrencies(appsApi.items, records), [appsApi.items, records])
@@ -102,7 +104,7 @@ export default function App() {
 
       <main style={{ flex: 1, overflowY: 'auto' }}>
         {tab === 'dashboard' && (
-          <Dashboard acquisitions={acquisitionsApi.items} consumptions={consumptionsApi.items} apps={apps} />
+          <Dashboard acquisitions={acquisitionsApi.items} consumptions={consumptionsApi.items} apps={apps} records={records} />
         )}
 
         {tab === 'record' && (
@@ -117,6 +119,7 @@ export default function App() {
             acquisitionsApi={acquisitionsApi}
             exchangesApi={exchangesApi}
             consumptionsApi={consumptionsApi}
+            adjustmentsApi={adjustmentsApi}
           />
         )}
 
@@ -154,7 +157,8 @@ export default function App() {
             backupApis={{
               apps: appsApi, banners: bannersApi, purchases: purchasesApi, pulls: pullsApi,
               schedules: schedulesApi, budgets: budgetsApi,
-              acquisitions: acquisitionsApi, exchanges: exchangesApi, consumptions: consumptionsApi
+              acquisitions: acquisitionsApi, exchanges: exchangesApi, consumptions: consumptionsApi,
+              adjustments: adjustmentsApi
             }}
           />
         )}
