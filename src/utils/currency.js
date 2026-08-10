@@ -137,33 +137,52 @@ export function consumptionTag(c) {
 }
 
 // 用途別の集計。円換算は「相当額」であって支出ではないため、通貨量を主・金額を従として返す
-export function consumptionByTag(app, consumptions, { since = '', until = '' } = {}) {
+export function consumptionByTag(app, consumptions, { filterMonth = null } = {}) {
   const currencyById = new Map(appCurrencies(app).map(c => [c.id, c]))
   const map = new Map()
 
   for (const c of consumptions) {
     if (c.appId !== app.id) continue
-    if (since && c.date < since) continue
-    if (until && c.date > until) continue
+    if (filterMonth && !inMonth(c.date, filterMonth.year, filterMonth.month)) continue
 
     const tag = consumptionTag(c)
     const currency = currencyById.get(c.currencyId)
     const qty = Number(c.quantity) || 0
 
-    if (!map.has(tag)) map.set(tag, { tag, byCurrency: new Map(), yen: 0 })
+    if (!map.has(tag)) map.set(tag, { tag, byCurrency: new Map(), yen: 0, count: 0, pulls: 0 })
     const bucket = map.get(tag)
     const name = currency?.name || '不明'
     bucket.byCurrency.set(name, (bucket.byCurrency.get(name) || 0) + qty)
     bucket.yen += qty * (Number(currency?.yenPerUnit) || 0)
+    bucket.count += 1
+    bucket.pulls += Number(c.pullCount) || 0
   }
 
   return [...map.values()]
     .map(b => ({
       tag: b.tag,
       currencies: [...b.byCurrency.entries()].map(([name, qty]) => ({ name, qty })),
-      yenEquivalent: Math.round(b.yen)
+      yenEquivalent: Math.round(b.yen),
+      count: b.count,
+      pulls: b.pulls
     }))
     .sort((a, b) => b.yenEquivalent - a.yenEquivalent)
+}
+
+// 指定した年月(YYYY-MM)の期間を [開始, 終了] のISO文字列で返す。ローカル時刻基準
+export function monthRange(year, month) {
+  const p2 = (n) => String(n).padStart(2, '0')
+  const start = new Date(year, month, 1)
+  const end = new Date(year, month + 1, 1)
+  const fmt = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T00:00:00.000Z`
+  // 日付境界の比較はローカル時刻で行う必要があるため、ISO文字列ではなく Date で比較する
+  return { start, end, startIso: fmt(start), endIso: fmt(end) }
+}
+
+// ローカル時刻で「その月の記録か」を判定する
+export function inMonth(isoDate, year, month) {
+  const d = new Date(isoDate)
+  return d.getFullYear() === year && d.getMonth() === month
 }
 
 // 用途の初期候補

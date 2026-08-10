@@ -1,7 +1,7 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { BarChart, Bar, XAxis, ResponsiveContainer, Tooltip } from 'recharts'
 import { totalAmount, monthlyTotal, currentMonthKey, monthlySeries, totalsByApp, formatYen } from '../utils/calc'
-import { consumptionByTag, poolTotal } from '../utils/currency'
+import { consumptionByTag, poolTotal, inMonth } from '../utils/currency'
 
 export default function Dashboard({ acquisitions, consumptions, apps }) {
   const thisMonth = currentMonthKey()
@@ -55,75 +55,160 @@ export default function Dashboard({ acquisitions, consumptions, apps }) {
         </div>
       </Section>
 
-      <Section title="通貨の残高">
-        {apps.length === 0 && <EmptyNote text="まずはアプリを登録してください" />}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {apps.map(app => (
-            <div key={app.id}>
-              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 4 }}>{app.name}</div>
-              {(app.currencies || []).map(c => (
-                <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, paddingLeft: 8 }}>
-                  <span style={{ color: 'var(--text-dim)' }}>{c.name}</span>
-                  <span>
-                    <span className="mono" style={{ color: 'var(--gold)' }}>
-                      {(c.total ?? poolTotal(c.balance)).toLocaleString('ja-JP')}
-                    </span>
-                    <span className="mono" style={{ fontSize: 11, color: 'var(--text-faint)' }}>
-                      {' '}(有償 {(c.balance?.paid || 0).toLocaleString('ja-JP')})
-                    </span>
-                  </span>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      </Section>
-
-      <UsageSection apps={apps} consumptions={consumptions} />
+      <BalanceSection apps={apps} />
+      <UsageSection apps={apps} consumptions={consumptions} acquisitions={acquisitions} />
     </div>
   )
 }
 
-// 用途別の内訳。金額は「相当額」であって支出ではないため、通貨量を主として見せる
-function UsageSection({ apps, consumptions }) {
-  const rows = useMemo(() => {
-    const all = []
-    for (const app of apps) {
-      for (const r of consumptionByTag(app, consumptions)) {
-        all.push({ ...r, appName: app.name, key: `${app.id}-${r.tag}` })
-      }
-    }
-    return all.sort((a, b) => b.yenEquivalent - a.yenEquivalent)
-  }, [apps, consumptions])
-
-  const max = rows.reduce((m, r) => Math.max(m, r.yenEquivalent), 0)
-
+// 通貨の残高。課金で得た資産がいくら残っているかを有償・無償の内訳つきで見る
+function BalanceSection({ apps }) {
   return (
-    <Section title="用途別の内訳">
-      {rows.length === 0 && <EmptyNote text="まだ消費の記録がありません" />}
-      {rows.length > 0 && (
-        <p style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 0, marginBottom: 10, lineHeight: 1.6 }}>
-          使った通貨を円に換算した参考値です。実際の支出額(上の課金額)とは別のものです。
-        </p>
-      )}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {rows.map(r => (
-          <div key={r.key}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 3 }}>
-              <span>{r.tag} <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{r.appName}</span></span>
-              <span className="mono" style={{ color: 'var(--text-dim)', fontSize: 12 }}>
-                約{r.yenEquivalent.toLocaleString('ja-JP')}円相当
-              </span>
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }} className="mono">
-              {r.currencies.map(c => `${c.name} ${c.qty.toLocaleString('ja-JP')}`).join(' / ')}
-            </div>
-            <div style={{ height: 5, background: 'var(--line)', borderRadius: 4, overflow: 'hidden' }}>
-              <div style={{ width: `${max > 0 ? (r.yenEquivalent / max) * 100 : 0}%`, height: '100%', background: 'var(--gold)' }} />
+    <Section title="通貨の残高">
+      {apps.length === 0 && <EmptyNote text="まずはアプリを登録してください" />}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {apps.map(app => (
+          <div key={app.id}>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>{app.name}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(app.currencies || []).map(c => {
+                const bal = c.balance || { paid: 0, free: 0 }
+                const total = c.total ?? poolTotal(bal)
+                const paidPct = total > 0 ? (bal.paid / total) * 100 : 0
+                return (
+                  <div key={c.id} style={{ paddingLeft: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 3 }}>
+                      <span>{c.name}</span>
+                      <span className="mono" style={{ color: 'var(--gold)' }}>{total.toLocaleString('ja-JP')}</span>
+                    </div>
+                    {total > 0 && (
+                      <div style={{ display: 'flex', height: 5, borderRadius: 4, overflow: 'hidden', background: 'var(--line)' }}>
+                        <div style={{ width: `${paidPct}%`, background: 'var(--gold)' }} />
+                        <div style={{ width: `${100 - paidPct}%`, background: 'var(--teal)' }} />
+                      </div>
+                    )}
+                    <div className="mono" style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 3 }}>
+                      <span style={{ color: 'var(--gold)' }}>有償 {bal.paid.toLocaleString('ja-JP')}</span>
+                      {' / '}
+                      <span style={{ color: 'var(--teal)' }}>無償 {bal.free.toLocaleString('ja-JP')}</span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
         ))}
       </div>
+    </Section>
+  )
+}
+
+// 用途別の内訳。金額は「相当額」であって支出ではないため、通貨量を主として見せる
+function UsageSection({ apps, consumptions, acquisitions }) {
+  const now = new Date()
+  const [scope, setScope] = useState('month')   // month | all
+  const [appId, setAppId] = useState('all')
+
+  const filterMonth = scope === 'month' ? { year: now.getFullYear(), month: now.getMonth() } : null
+  const targetApps = appId === 'all' ? apps : apps.filter(a => a.id === appId)
+
+  const rows = useMemo(() => {
+    const all = []
+    for (const app of targetApps) {
+      for (const r of consumptionByTag(app, consumptions, { filterMonth })) {
+        all.push({ ...r, appName: app.name, key: `${app.id}-${r.tag}` })
+      }
+    }
+    return all.sort((a, b) => b.yenEquivalent - a.yenEquivalent)
+  }, [targetApps, consumptions, scope])
+
+  const totalYen = rows.reduce((s, r) => s + r.yenEquivalent, 0)
+  const max = rows.reduce((m, r) => Math.max(m, r.yenEquivalent), 0)
+
+  // 同期間の課金額(比較用)
+  const spentYen = useMemo(() => {
+    return acquisitions
+      .filter(a => (appId === 'all' || a.appId === appId))
+      .filter(a => !filterMonth || inMonth(a.date, filterMonth.year, filterMonth.month))
+      .reduce((s, a) => s + (a.amountYen || 0), 0)
+  }, [acquisitions, appId, scope])
+
+  return (
+    <Section title="用途別の内訳">
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+        {[{ k: 'month', l: '今月' }, { k: 'all', l: '全期間' }].map(o => (
+          <button
+            key={o.k}
+            onClick={() => setScope(o.k)}
+            style={{
+              padding: '5px 14px', borderRadius: 999, fontSize: 12,
+              border: `1px solid ${scope === o.k ? 'var(--gold)' : 'var(--line)'}`,
+              background: scope === o.k ? 'var(--gold-soft)' : 'transparent',
+              color: scope === o.k ? 'var(--gold)' : 'var(--text-dim)'
+            }}
+          >
+            {o.l}
+          </button>
+        ))}
+        {apps.length > 1 && (
+          <select
+            value={appId}
+            onChange={e => setAppId(e.target.value)}
+            style={{
+              marginLeft: 'auto', background: 'var(--ink-bg-elevated)', border: '1px solid var(--line)',
+              borderRadius: 999, padding: '5px 10px', fontSize: 12, color: 'var(--text-dim)'
+            }}
+          >
+            <option value="all">すべてのアプリ</option>
+            {apps.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        )}
+      </div>
+
+      {rows.length === 0 && <EmptyNote text={scope === 'month' ? '今月の消費記録がありません' : 'まだ消費の記録がありません'} />}
+
+      {rows.length > 0 && (
+        <>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
+            padding: '8px 10px', background: 'var(--ink-bg-elevated)', borderRadius: 'var(--radius-sm)', marginBottom: 10
+          }}>
+            <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>使った資産の合計</span>
+            <span className="mono" style={{ fontSize: 14, color: 'var(--gold)' }}>約{totalYen.toLocaleString('ja-JP')}円相当</span>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {rows.map(r => (
+              <div key={r.key}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 3 }}>
+                  <span>
+                    {r.tag}
+                    {apps.length > 1 && appId === 'all' && (
+                      <span style={{ fontSize: 11, color: 'var(--text-faint)' }}> {r.appName}</span>
+                    )}
+                  </span>
+                  <span className="mono" style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                    約{r.yenEquivalent.toLocaleString('ja-JP')}円相当
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }} className="mono">
+                  {r.currencies.map(c => `${c.name} ${c.qty.toLocaleString('ja-JP')}`).join(' / ')}
+                  {r.pulls > 0 && ` ・ ${r.pulls}連`}
+                  {` ・ ${r.count}件`}
+                </div>
+                <div style={{ height: 5, background: 'var(--line)', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ width: `${max > 0 ? (r.yenEquivalent / max) * 100 : 0}%`, height: '100%', background: 'var(--gold)' }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 12, lineHeight: 1.7 }}>
+            使った通貨を円に換算した参考値です。無償で得た分も含むため、
+            実際の支出({scope === 'month' ? '今月' : '累計'}の課金額 {formatYen(spentYen)})とは一致しません。
+          </div>
+        </>
+      )}
     </Section>
   )
 }
