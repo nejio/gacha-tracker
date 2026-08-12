@@ -17,7 +17,7 @@ const OTHER_TABS = [
 
 export default function RecordScreen({
   apps, banners, schedules, prefill, consumptions,
-  bannersApi, acquisitionsApi, exchangesApi, consumptionsApi, adjustmentsApi
+  bannersApi, acquisitionsApi, exchangesApi, consumptionsApi, adjustmentsApi, pityPools, pityPoolsApi
 }) {
   const [subTab, setSubTab] = useState(prefill ? 'gacha' : 'acquire')
   const [showOther, setShowOther] = useState(false)
@@ -85,6 +85,8 @@ export default function RecordScreen({
           apps={apps} banners={banners} schedules={schedules} prefill={prefill}
           consumptions={consumptions} bannersApi={bannersApi} consumptionsApi={consumptionsApi}
           adjustmentsApi={adjustmentsApi}
+          pityPools={pityPools}
+          pityPoolsApi={pityPoolsApi}
           gachaMode={subTab === 'gacha'}
         />
       )}
@@ -95,18 +97,22 @@ export default function RecordScreen({
 // 実際の残高を入力してもらい、計算値とのズレを自動で埋める。
 // 無償石は配布機会が多く毎回の記録は現実的でないため、
 // ゲーム画面で必ず目にする残高を「答え合わせ」として使う。入力は任意。
-function BalanceCheck({ app, currencyId, value, onChange }) {
+//
+// 入力するのは「これから使う前」の残高。消費分はアプリ側で差し引くので、
+// ユーザーが引いた後の残高を自分で計算する必要はない。
+function BalanceCheck({ app, currencyId, value, onChange, willSpend = 0, label }) {
   if (!app || !currencyId) return null
   const c = (app.currencies || []).find(x => x.id === currencyId)
   if (!c) return null
   const expected = c.total ?? poolTotal(c.balance)
   const observed = value === '' ? null : Number(value)
   const diff = observed == null ? null : observed - expected
+  const after = observed == null ? null : observed - (Number(willSpend) || 0)
 
   return (
     <div style={{ background: 'var(--ink-bg-elevated)', borderRadius: 'var(--radius-sm)', padding: '10px 12px' }}>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--text-dim)' }}>
-        今の{c.name}の残高(任意)
+        {label || `今の${c.name}の残高(任意)`}
         <input
           type="number"
           inputMode="numeric"
@@ -124,6 +130,11 @@ function BalanceCheck({ app, currencyId, value, onChange }) {
       )}
       {diff === 0 && (
         <div style={{ fontSize: 11, marginTop: 6, color: 'var(--text-faint)' }}>計算上の残高と一致しています</div>
+      )}
+      {after != null && willSpend > 0 && (
+        <div style={{ fontSize: 11, marginTop: 4, color: 'var(--text-dim)' }} className="mono">
+          記録後の残高 {after.toLocaleString('ja-JP')}{c.name}
+        </div>
       )}
       {observed == null && (
         <div style={{ fontSize: 10, marginTop: 6, color: 'var(--text-faint)', lineHeight: 1.6 }}>
@@ -159,7 +170,7 @@ function AcquireForm({ apps, acquisitionsApi, adjustmentsApi, isFreeMode }) {
   const [quantity, setQuantity] = useState('')
   const [observed, setObserved] = useState('')
   const [note, setNote] = useState('')
-  const [savedMsg, setSavedMsg] = useState('')
+  const [saved, setSaved] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
 
   const app = apps.find(a => a.id === appId)
@@ -196,9 +207,18 @@ function AcquireForm({ apps, acquisitionsApi, adjustmentsApi, isFreeMode }) {
     }
 
     const cname = currencies.find(c => c.id === currencyId)?.name || ''
-    setSavedMsg(`${Number(quantity).toLocaleString('ja-JP')}${cname} を追加しました`)
+    const lines = []
+    if (!isFree) lines.push({ label: '課金額', value: `¥${Number(amountYen).toLocaleString('ja-JP')}`, accent: 'var(--gold)' })
+    lines.push({ label: '受け取り', value: `${Number(quantity).toLocaleString('ja-JP')}${cname}`, accent: 'var(--teal)' })
+    if (observed !== '') {
+      lines.push({ label: '記録後の残高', value: `${(Number(observed) + Number(quantity)).toLocaleString('ja-JP')}${cname}` })
+    }
+    setSaved({
+      title: isFree ? '受け取りを記録しました' : '課金を記録しました',
+      lines,
+      note: isFree ? null : 'この金額が課金額として集計されます'
+    })
     setAmountYen(''); setQuantity(''); setObserved(''); setNote('')
-    setTimeout(() => setSavedMsg(''), 2500)
   }
 
   const cname = currencies.find(c => c.id === currencyId)?.name
@@ -238,14 +258,19 @@ function AcquireForm({ apps, acquisitionsApi, adjustmentsApi, isFreeMode }) {
         <input type="number" inputMode="numeric" value={quantity} onChange={e => setQuantity(e.target.value)} style={inputStyle} />
       </Field>
 
-      <BalanceCheck app={app} currencyId={currencyId} value={observed} onChange={setObserved} />
+      <BalanceCheck
+        app={app} currencyId={currencyId} value={observed} onChange={setObserved}
+        willSpend={-(Number(quantity) || 0)}
+        label={isFree ? '受け取る前の残高(任意)' : '課金する前の残高(任意)'}
+      />
 
       <Field label="メモ(任意)">
         <textarea value={note} onChange={e => setNote(e.target.value)} style={{ ...inputStyle, minHeight: 50, resize: 'vertical' }} />
       </Field>
 
       <button type="submit" style={primaryBtnStyle}>{isFree ? '獲得を記録する' : '課金を記録する'}</button>
-      <Messages error={errorMsg} success={savedMsg} />
+      <Messages error={errorMsg} success="" />
+      <SavedDialog result={saved} onClose={() => setSaved(null)} />
     </form>
   )
 }
@@ -357,30 +382,36 @@ function ExchangeForm({ apps, exchangesApi }) {
 }
 
 // ============ 消費(通貨を使う。ガチャもこの一形態) ============
-function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersApi, consumptionsApi, adjustmentsApi, gachaMode }) {
+function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersApi, consumptionsApi, adjustmentsApi, pityPools, pityPoolsApi, gachaMode }) {
   const [appId, setAppId] = useState(prefill?.appId || '')
   const [currencyId, setCurrencyId] = useState('')
   const [tag, setTag] = useState(gachaMode ? 'ガチャ' : '')
   const [customTag, setCustomTag] = useState('')
   const [quantity, setQuantity] = useState('')
+  const [quantityTouched, setQuantityTouched] = useState(false)  // 手で編集したら自動計算で上書きしない
   const [paidOnly, setPaidOnly] = useState(false)
   const [note, setNote] = useState('')
   const [observed, setObserved] = useState('')
+  const [poolId, setPoolId] = useState('')
   const [bannerId, setBannerId] = useState('')
   const [scheduleId, setScheduleId] = useState(prefill?.scheduleId || '')
   const [pullCount, setPullCount] = useState(10)
   const [targetItem, setTargetItem] = useState('')
   const [outcome, setOutcome] = useState('none')
   const [atPull, setAtPull] = useState('')
-  const [savedMsg, setSavedMsg] = useState('')
+  const [saved, setSaved] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
 
   const app = apps.find(a => a.id === appId)
   const currencies = app ? appCurrencies(app) : []
   const isGacha = !!gachaMode || tag === 'ガチャ'
-  const appBanners = banners.filter(b => b.appId === appId)
+  const appPools = (pityPools || []).filter(p => p.appId === appId)
+  const selectedPool = appPools.find(p => p.id === poolId)
+  // バナーは選んだ天井枠に属するものだけ。登録は任意
+  const poolBanners = banners.filter(b => b.poolId === poolId)
   const appSchedules = (schedules || []).filter(s => s.appId === appId)
-  const selectedBanner = banners.find(b => b.id === bannerId)
+  // 天井の計算・表示は枠が持つ状態を使う(バナーが変わっても引き継がれる)
+  const selectedBanner = selectedPool
 
   const tagOptions = useMemo(
     () => [...new Set([...DEFAULT_TAGS, ...usedTags(consumptions || [])])],
@@ -392,7 +423,7 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
   )
 
   const autoQty = isGacha && selectedBanner ? (Number(pullCount) || 0) * (selectedBanner.costPerPull || 0) : 0
-  const effectiveQty = quantity !== '' ? Number(quantity) : autoQty
+  const effectiveQty = quantityTouched ? (quantity === '' ? 0 : Number(quantity)) : autoQty
   const atPullValue = atPull !== '' ? Number(atPull) : Number(pullCount)
 
   const pityPreview = useMemo(() => {
@@ -405,15 +436,17 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
     const a = apps.find(x => x.id === id)
     const list = a ? appCurrencies(a) : []
     setCurrencyId(list.find(c => c.id === 'main')?.id || list[list.length - 1]?.id || '')
+    const pools = (pityPools || []).filter(p => p.appId === id)
+    setPoolId(pools.length === 1 ? pools[0].id : '')   // 枠が1つなら自動で選ぶ
     setBannerId(''); setScheduleId('')
   }
 
-  const chooseBanner = (id) => {
-    setBannerId(id)
-    const b = banners.find(x => x.id === id)
-    if (b?.currencyId) setCurrencyId(b.currencyId)
-    if (b?.lastTarget && !targetItem.trim()) setTargetItem(b.lastTarget)
-    setQuantity('')
+  const choosePool = (id) => {
+    setPoolId(id); setBannerId('')
+    const p = (pityPools || []).find(x => x.id === id)
+    if (p?.currencyId) setCurrencyId(p.currencyId)
+    if (p?.lastTarget && !targetItem.trim()) setTargetItem(p.lastTarget)
+    setQuantity(''); setQuantityTouched(false)
   }
 
   // 消費は「この通貨をこの数量使った」という1つの事実なので、用途は1つだけ選ぶ。
@@ -426,7 +459,7 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
   }
 
   const reset = () => {
-    setQuantity(''); setNote(''); setObserved(''); setPullCount(10); setOutcome('none'); setAtPull(''); setPaidOnly(false)
+    setQuantity(''); setQuantityTouched(false); setNote(''); setObserved(''); setPullCount(10); setOutcome('none'); setAtPull(''); setPaidOnly(false)
   }
 
   const submit = async (e) => {
@@ -434,10 +467,11 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
     if (!appId) { setErrorMsg('アプリを選択してください'); return }
     if (!currencyId) { setErrorMsg('通貨を選択してください'); return }
     if (!isGacha && !tag) { setErrorMsg('用途を選んでください'); return }
-    if (!effectiveQty) { setErrorMsg('消費した数量を入力してください'); return }
+    if (effectiveQty === '' || effectiveQty == null || Number.isNaN(Number(effectiveQty))) { setErrorMsg('消費した数量を入力してください'); return }
     setErrorMsg('')
 
     const now = new Date().toISOString()
+    let pityResult = null
     const record = {
       appId, currencyId,
       date: now,
@@ -458,6 +492,7 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
         pityTriggered = r.isPityTriggered
       }
       Object.assign(record, {
+        poolId: poolId || null,
         bannerId: bannerId || null,
         scheduleId: scheduleId || null,
         pullCount: Number(pullCount) || 0,
@@ -468,23 +503,44 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
         obtainedAtPull: outcome !== 'none' ? atPullValue : null,
         isPityTriggered: pityTriggered
       })
-      if (selectedBanner && targetItem.trim()) {
-        await bannersApi.update(selectedBanner.id, { lastTarget: targetItem.trim() })
+      if (selectedPool && targetItem.trim() && pityPoolsApi) {
+        await pityPoolsApi.update(selectedPool.id, { lastTarget: targetItem.trim() })
       }
-      setSavedMsg(pityTriggered ? '天井到達で確定入手として記録しました'
-        : finalLost ? 'すり抜けとして記録しました(次の最高レアは確定扱い)'
-        : '記録しました')
-    } else {
-      setSavedMsg('記録しました')
+      pityResult = { pityTriggered, finalLost, finalObtained }
     }
 
-    await consumptionsApi.add(record)
-    // 残高が入力されていれば、消費を反映した後の実測値として記録する
+    // 入力された残高は「引く前」の実測値。消費より1ミリ秒前の時点として記録し、
+    // そこから消費分が差し引かれるようにする(引いた後の残高を自分で計算しなくて済む)
     if (observed !== '') {
-      await adjustmentsApi.add({ appId, currencyId, date: now, observedTotal: Number(observed) })
+      const before = new Date(new Date(now).getTime() - 1).toISOString()
+      await adjustmentsApi.add({ appId, currencyId, date: before, observedTotal: Number(observed) })
     }
+    await consumptionsApi.add(record)
+
+    // 何がどう記録されたかを明示する
+    const cname = currencies.find(c => c.id === currencyId)?.name || ''
+    const lines = []
+    if (isGacha && Number(pullCount) > 0) {
+      lines.push({ label: '引いた回数', value: `${Number(pullCount).toLocaleString('ja-JP')}連`, accent: 'var(--gold)' })
+    }
+    lines.push({ label: '消費', value: `${effectiveQty.toLocaleString('ja-JP')}${cname}`, accent: 'var(--teal)' })
+    if (observed !== '') {
+      lines.push({ label: '記録後の残高', value: `${(Number(observed) - effectiveQty).toLocaleString('ja-JP')}${cname}` })
+    }
+    if (isGacha && selectedPool) {
+      const after = applyPullToBanner(selectedPool, Number(pullCount) || 0, outcome, atPullValue)
+      lines.push({ label: `天井(${selectedPool.name})`, value: `${after.pityCurrent} / ${selectedPool.pityMax}` })
+    }
+    if (!isGacha) lines.push({ label: '用途', value: tag })
+
+    setSaved({
+      title: isGacha ? 'ガチャを記録しました' : '消費を記録しました',
+      lines,
+      note: pityResult?.pityTriggered ? '天井に到達したため、確定入手として記録しました'
+        : pityResult?.finalLost ? 'すり抜けのため、次の最高レアは確定になります'
+        : null
+    })
     reset()
-    setTimeout(() => setSavedMsg(''), 2500)
   }
 
   const currencyName = currencies.find(c => c.id === currencyId)?.name || ''
@@ -549,11 +605,20 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
 
       <BalanceNote app={app} currencyId={currencyId} />
 
-      {isGacha && appBanners.length > 0 && (
-        <Field label="バナー">
-          <select value={bannerId} onChange={e => chooseBanner(e.target.value)} style={inputStyle}>
+      {isGacha && appPools.length > 0 && (
+        <Field label="天井枠">
+          <select value={poolId} onChange={e => choosePool(e.target.value)} style={inputStyle}>
             <option value="">指定しない(天井管理なし)</option>
-            {appBanners.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            {appPools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </Field>
+      )}
+
+      {isGacha && poolBanners.length > 0 && (
+        <Field label="バナー(任意)">
+          <select value={bannerId} onChange={e => setBannerId(e.target.value)} style={inputStyle}>
+            <option value="">指定しない</option>
+            {poolBanners.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </Field>
       )}
@@ -575,12 +640,22 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
 
       {isGacha && (
         <Field label="ガチャ回数">
-          <input type="number" value={pullCount} onChange={e => { setPullCount(e.target.value); setQuantity('') }} style={inputStyle} min="0" />
+          <input type="number" value={pullCount} onChange={e => { setPullCount(e.target.value); setQuantity(''); setQuantityTouched(false) }} style={inputStyle} min="0" />
         </Field>
       )}
 
-      <Field label={`消費した数量${currencyName ? `(${currencyName})` : ''}${autoQty > 0 ? '(自動計算・修正可)' : ''}`}>
-        <input type="number" value={quantity !== '' ? quantity : (autoQty || '')} onChange={e => setQuantity(e.target.value)} style={inputStyle} />
+      <Field label={`消費した数量${currencyName ? `(${currencyName})` : ''}${autoQty > 0 && !quantityTouched ? '(自動計算・修正可)' : ''}`}>
+        <input
+          type="number"
+          value={quantityTouched ? quantity : (autoQty || '')}
+          onChange={e => { setQuantity(e.target.value); setQuantityTouched(true) }}
+          style={inputStyle}
+        />
+        {quantityTouched && (
+          <button type="button" onClick={() => { setQuantity(''); setQuantityTouched(false) }} style={{ fontSize: 10, color: 'var(--teal)', textAlign: 'left', marginTop: 4 }}>
+            自動計算に戻す
+          </button>
+        )}
       </Field>
 
       <label style={checkStyle}>
@@ -588,7 +663,11 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
         有償の通貨のみで消費(有償限定ガチャなど)
       </label>
 
-      <BalanceCheck app={app} currencyId={currencyId} value={observed} onChange={setObserved} />
+      <BalanceCheck
+        app={app} currencyId={currencyId} value={observed} onChange={setObserved}
+        willSpend={effectiveQty}
+        label="引く前の残高(任意)"
+      />
 
       {isGacha && (
         <>
@@ -599,12 +678,28 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
             </datalist>
           </Field>
 
-          <Field label="結果">
-            <select value={outcome} onChange={e => { setOutcome(e.target.value); setAtPull('') }} style={inputStyle}>
-              <option value="none">目的のアイテムは出ていない</option>
-              <option value="obtained">目的のアイテムを入手した</option>
-              <option value="lost">すり抜けた(最高レアは出たが目的ではない)</option>
-            </select>
+          <Field label="このガチャの結果">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {[
+                { v: 'none', t: '最高レアは出なかった', d: '天井カウンターがそのまま進みます' },
+                { v: 'obtained', t: '目的のものを入手した', d: '天井カウンターがリセットされます' },
+                { v: 'lost', t: 'すり抜けた', d: '最高レアは出たが目的ではない。カウンターはリセットされ、次の最高レアが確定になります' }
+              ].map(o => (
+                <button
+                  key={o.v}
+                  type="button"
+                  onClick={() => { setOutcome(o.v); setAtPull('') }}
+                  style={{
+                    textAlign: 'left', padding: '10px 12px', borderRadius: 'var(--radius-sm)',
+                    border: `1px solid ${outcome === o.v ? 'var(--gold)' : 'var(--line)'}`,
+                    background: outcome === o.v ? 'var(--gold-soft)' : 'var(--ink-bg-elevated)'
+                  }}
+                >
+                  <div style={{ fontSize: 13, color: outcome === o.v ? 'var(--gold)' : 'var(--text)' }}>{o.t}</div>
+                  <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2, lineHeight: 1.5 }}>{o.d}</div>
+                </button>
+              ))}
+            </div>
           </Field>
 
           {outcome !== 'none' && Number(pullCount) > 1 && (
@@ -632,8 +727,48 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
       )}
 
       <button type="submit" style={primaryBtnStyle}>記録する</button>
-      <Messages error={errorMsg} success={savedMsg} />
+      <Messages error={errorMsg} success="" />
+      <SavedDialog result={saved} onClose={() => setSaved(null)} />
     </form>
+  )
+}
+
+// 記録が確実に保存されたことを伝えるダイアログ。
+// 小さなメッセージだけだと保存できたか分かりにくいため、明示的に確認させる。
+function SavedDialog({ result, onClose }) {
+  if (!result) return null
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 300,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24
+    }}>
+      <div style={{
+        background: 'var(--ink-bg-card)', border: '1px solid var(--gold)',
+        borderRadius: 'var(--radius)', padding: 20, maxWidth: 340, width: '100%', textAlign: 'center'
+      }}>
+        <div style={{ fontSize: 28, marginBottom: 6 }}>✓</div>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, color: 'var(--gold)', marginBottom: 12 }}>
+          {result.title}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16, fontSize: 13, color: 'var(--text-dim)' }}>
+          {result.lines.map((l, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+              <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>{l.label}</span>
+              <span className="mono" style={{ color: l.accent || 'var(--text)' }}>{l.value}</span>
+            </div>
+          ))}
+        </div>
+        {result.note && (
+          <div style={{ fontSize: 11, color: 'var(--gold)', marginBottom: 14, lineHeight: 1.6 }}>{result.note}</div>
+        )}
+        <button
+          onClick={onClose}
+          style={{ width: '100%', padding: '12px 0', borderRadius: 'var(--radius-sm)', background: 'var(--gold)', color: 'var(--ink-bg)', fontWeight: 700, fontSize: 15 }}
+        >
+          OK
+        </button>
+      </div>
+    </div>
   )
 }
 

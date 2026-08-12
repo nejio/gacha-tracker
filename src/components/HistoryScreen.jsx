@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formatYen, computePity, gachaConsumptions } from '../utils/calc'
+import { formatYen, computePoolPity, gachaConsumptions } from '../utils/calc'
 import { appCurrencies, consumptionTag } from '../utils/currency'
 
 const KIND_META = {
@@ -9,7 +9,7 @@ const KIND_META = {
 }
 
 export default function HistoryScreen({
-  apps, banners, acquisitions, exchanges, consumptions,
+  apps, banners, pityPools, acquisitions, exchanges, consumptions,
   acquisitionsApi, exchangesApi, consumptionsApi
 }) {
   const [confirming, setConfirming] = useState(null)
@@ -38,11 +38,13 @@ export default function HistoryScreen({
       lines.push(`${currencyName(item.appId, item.toCurrencyId)} が ${item.toQty.toLocaleString('ja-JP')} 減ります`)
     } else {
       lines.push(`${currencyName(item.appId, item.currencyId)} が ${item.quantity.toLocaleString('ja-JP')} 戻ります`)
-      const banner = banners.find(b => b.id === item.bannerId)
-      if (banner) {
-        const after = computePity(banner, gachaConsumptions(consumptions.filter(c => c.id !== item.id)))
-        lines.push(`天井: ${banner.pityCurrent || 0} → ${after.pityCurrent} / ${banner.pityMax}`)
-        if (!!banner.guaranteed !== after.guaranteed) {
+      // 天井は枠が持つ。記録に紐づく枠(なければバナーの所属枠)で再計算する
+      const poolId = item.poolId || banners.find(b => b.id === item.bannerId)?.poolId
+      const pool = (pityPools || []).find(p => p.id === poolId)
+      if (pool) {
+        const after = computePoolPity(pool, banners, gachaConsumptions(consumptions.filter(c => c.id !== item.id)))
+        lines.push(`天井(${pool.name}): ${pool.pityCurrent || 0} → ${after.pityCurrent} / ${pool.pityMax}`)
+        if (!!pool.guaranteed !== after.guaranteed) {
           lines.push(after.guaranteed ? '「次回確定」が付きます' : '「次回確定」が外れます')
         }
       }

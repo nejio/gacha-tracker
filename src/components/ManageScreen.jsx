@@ -4,7 +4,7 @@ import BackupSection from './BackupSection'
 import { formatYen, systemPulls, GAME_PRESETS, APP_VERSION, BUILD_DATE, formatBuildDate } from '../utils/calc'
 import { appCurrencies, poolTotal } from '../utils/currency'
 
-export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls, backupApis }) {
+export default function ManageScreen({ apps, appsApi, banners, bannersApi, pityPools, pityPoolsApi, pulls, backupApis }) {
   const [presetKey, setPresetKey] = useState('')
   const [newApp, setNewApp] = useState('')
   const [newCurrencyName, setNewCurrencyName] = useState('石')
@@ -44,6 +44,10 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
       openingPaid: 0, openingFree: Number(newOpeningBalance) || 0,
       yenPerUnit: Number(newYenRate) || 0
     })
+    // ガチャの副産物(スターダスト等)も通貨として持つ。ガチャ用アイテムに交換できるため
+    for (const bp of (preset?.byproducts || [])) {
+      currencies.push({ id: bp.id, name: bp.name, openingPaid: 0, openingFree: 0, yenPerUnit: bp.yenPerUnit })
+    }
 
     const ref = await appsApi.add({
       name: newApp.trim(),
@@ -54,8 +58,9 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
       currencyPerPurchaseUnit: preset?.currencyPerPurchaseUnit || null
     })
     if (preset) {
+      // プリセットのバナー定義はそのまま天井枠になる(キャラ枠・武器枠など)
       for (const b of preset.banners) {
-        await bannersApi.add({
+        await pityPoolsApi.add({
           appId: ref.id,
           name: b.name,
           pityMax: b.pityMax,
@@ -105,6 +110,12 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
                 課金で{preset.purchaseCurrencyName}を購入し、1個を{preset.currencyName}{preset.currencyPerPurchaseUnit}個に交換して使うゲームです
               </div>
             )}
+            {preset.byproducts && (
+              <div style={{ marginBottom: 6, color: 'var(--teal)' }}>
+                ガチャの副産物({preset.byproducts.map(b => b.name).join('・')})も通貨として登録され、
+                「交換する」から{preset.currencyName}への交換を記録できます
+              </div>
+            )}
             <div style={{ marginBottom: 6, color: 'var(--gold)' }}>以下のバナーも自動作成されます</div>
             {preset.banners.map(b => {
               const r = systemPulls(b.system)
@@ -144,14 +155,14 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pulls
               </div>
               <div style={{ display: 'flex', gap: 12 }}>
                 <button onClick={() => setExpandedAppId(expandedAppId === app.id ? null : app.id)} style={linkBtnStyle}>
-                  天井設定 {expandedAppId === app.id ? '▲' : '▼'}
+                  天井枠 {expandedAppId === app.id ? '▲' : '▼'}
                 </button>
                 <button onClick={() => appsApi.remove(app.id)} style={{ ...linkBtnStyle, color: 'var(--danger)' }}>削除</button>
               </div>
             </div>
 
             {expandedAppId === app.id && (
-              <BannerSection appId={app.id} currencyName={app.currencyName || '石'} banners={banners.filter(b => b.appId === app.id)} bannersApi={bannersApi} />
+              <PoolSection app={app} pools={(pityPools || []).filter(p => p.appId === app.id)} pityPoolsApi={pityPoolsApi} banners={banners.filter(b => b.appId === app.id)} bannersApi={bannersApi} />
             )}
           </div>
         ))}
@@ -221,67 +232,115 @@ function CurrencyEditor({ app, appsApi }) {
   )
 }
 
-function BannerSection({ appId, currencyName, banners, bannersApi }) {
+// 天井枠 = 天井カウンターを共有する単位。
+// バナーが切り替わっても同じ枠なら天井が引き継がれるため、カウンターは枠が持つ。
+function PoolSection({ app, pools, pityPoolsApi, banners, bannersApi }) {
+  const gachaCurrency = (app.currencies || []).find(c => c.id === 'main') || (app.currencies || [])[0]
+  const currencyName = gachaCurrency?.name || '石'
   const [form, setForm] = useState({ name: '', pityMax: 90, costPerPull: 160, openingPity: 0 })
+  const [expandedPoolId, setExpandedPoolId] = useState(null)
 
-  const addBanner = async (e) => {
+  const addPool = async (e) => {
     e.preventDefault()
     if (!form.name.trim()) return
-    await bannersApi.add({
-      appId,
+    await pityPoolsApi.add({
+      appId: app.id,
       name: form.name.trim(),
       pityMax: Number(form.pityMax) || 0,
       costPerPull: Number(form.costPerPull) || 0,
       openingPity: Number(form.openingPity) || 0,
       openingGuaranteed: false,
       openingDate: new Date().toISOString(),
-      currencyId: 'main'
+      currencyId: gachaCurrency?.id || 'main'
     })
     setForm({ name: '', pityMax: 90, costPerPull: 160, openingPity: 0 })
   }
 
   return (
     <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--line)' }}>
-      {banners.map(b => (
-        <div key={b.id} style={{ marginBottom: 14 }}>
-          <PityGauge banner={b} />
-          <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>1回 {b.costPerPull}{currencyName}</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 11, color: 'var(--text-dim)', flexWrap: 'wrap' }}>
-            開始時の天井
-            <input
-              type="number"
-              value={b.openingPity ?? 0}
-              onChange={e => bannersApi.update(b.id, { openingPity: e.target.value === '' ? 0 : Number(e.target.value) })}
-              style={{ ...inputStyle, width: 64, padding: '4px 6px', fontSize: 11, flex: 'none' }}
-            />
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input
-                type="checkbox"
-                checked={!!b.openingGuaranteed}
-                onChange={e => bannersApi.update(b.id, { openingGuaranteed: e.target.checked })}
-              />
-              開始時すり抜け済み
-            </label>
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
-            表示中の天井は記録から自動計算されます。ズレた場合はここを修正してください
-          </div>
-          <div style={{ textAlign: 'right', marginTop: 4 }}>
-            <button onClick={() => bannersApi.remove(b.id)} style={{ ...linkBtnStyle, color: 'var(--danger)', fontSize: 11 }}>
-              このバナーを削除
-            </button>
-          </div>
-        </div>
-      ))}
+      <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 10, lineHeight: 1.6 }}>
+        天井枠は天井カウンターを共有する単位です。同じ枠のバナーは、切り替わっても天井が引き継がれます。
+      </div>
 
-      <form onSubmit={addBanner} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="バナー名(例: 限定ピックアップ)" style={inputStyle} />
+      {pools.map(pool => {
+        const poolBanners = banners.filter(b => b.poolId === pool.id)
+        const unit = (app.currencies || []).find(c => c.id === pool.currencyId)?.name || currencyName
+        return (
+          <div key={pool.id} style={{ marginBottom: 16 }}>
+            <PityGauge banner={pool} />
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
+              1回 {pool.costPerPull}{unit}{poolBanners.length > 0 && ` ・ バナー${poolBanners.length}件`}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 11, color: 'var(--text-dim)', flexWrap: 'wrap' }}>
+              開始時の天井
+              <input type="number" value={pool.openingPity ?? 0}
+                onChange={e => pityPoolsApi.update(pool.id, { openingPity: e.target.value === '' ? 0 : Number(e.target.value) })}
+                style={{ ...inputStyle, width: 64, padding: '4px 6px', fontSize: 11, flex: 'none' }} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input type="checkbox" checked={!!pool.openingGuaranteed}
+                  onChange={e => pityPoolsApi.update(pool.id, { openingGuaranteed: e.target.checked })} />
+                開始時すり抜け済み
+              </label>
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-faint)', marginTop: 2 }}>
+              表示中の天井は記録から自動計算されます。ズレた場合はここを修正してください
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+              <button onClick={() => setExpandedPoolId(expandedPoolId === pool.id ? null : pool.id)} style={linkBtnStyle}>
+                バナー {expandedPoolId === pool.id ? '▲' : '▼'}
+              </button>
+              <button onClick={() => pityPoolsApi.remove(pool.id)} style={{ ...linkBtnStyle, color: 'var(--danger)', fontSize: 11 }}>
+                この天井枠を削除
+              </button>
+            </div>
+
+            {expandedPoolId === pool.id && (
+              <BannerList app={app} pool={pool} banners={poolBanners} bannersApi={bannersApi} />
+            )}
+          </div>
+        )
+      })}
+
+      <form onSubmit={addPool} style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+        <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="天井枠を追加(例: 限定キャラ)" style={inputStyle} />
         <div style={{ display: 'flex', gap: 8 }}>
           <LabeledInput label="天井回数" value={form.pityMax} onChange={v => setForm({ ...form, pityMax: v })} />
           <LabeledInput label={`1回の${currencyName}消費数`} value={form.costPerPull} onChange={v => setForm({ ...form, costPerPull: v })} />
         </div>
-        <LabeledInput label="現在の天井カウンター(記録開始時点)" value={form.openingPity} onChange={v => setForm({ ...form, openingPity: v })} />
-        <button type="submit" style={primaryBtnStyle}>バナーを追加</button>
+        <LabeledInput label="現在の天井カウンター" value={form.openingPity} onChange={v => setForm({ ...form, openingPity: v })} />
+        <button type="submit" style={primaryBtnStyle}>天井枠を追加</button>
+      </form>
+    </div>
+  )
+}
+
+// 天井枠に属する個別のバナー(開催単位)。記録の内訳を残したいときだけ登録すればよい
+function BannerList({ app, pool, banners, bannersApi }) {
+  const [name, setName] = useState('')
+  const addBanner = async (e) => {
+    e.preventDefault()
+    if (!name.trim()) return
+    await bannersApi.add({ appId: app.id, poolId: pool.id, name: name.trim(), currencyId: pool.currencyId || 'main' })
+    setName('')
+  }
+  return (
+    <div style={{ marginTop: 10, paddingLeft: 10, borderLeft: '2px solid var(--line)' }}>
+      {banners.length === 0 && (
+        <div style={{ fontSize: 10, color: 'var(--text-faint)', marginBottom: 6 }}>
+          バナーは記録の内訳を残したいときだけ登録すれば十分です
+        </div>
+      )}
+      {banners.map(b => (
+        <div key={b.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, marginBottom: 4 }}>
+          <span style={{ color: 'var(--text-dim)' }}>{b.name}</span>
+          <button onClick={() => bannersApi.remove(b.id)} style={{ fontSize: 10, color: 'var(--danger)' }}>削除</button>
+        </div>
+      ))}
+      <form onSubmit={addBanner} style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="バナーを追加(例: 雷電将軍 復刻)" style={{ ...inputStyle, fontSize: 12, padding: '6px 8px' }} />
+        <button type="submit" style={{ ...primaryBtnStyle, padding: '6px 12px', fontSize: 12 }}>追加</button>
       </form>
     </div>
   )

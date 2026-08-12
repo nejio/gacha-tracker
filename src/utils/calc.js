@@ -123,6 +123,58 @@ export function withDerivedPity(banners, gachaRecords) {
   return banners.map(b => ({ ...b, ...computePity(b, gachaRecords) }))
 }
 
+// ============ 天井枠 ============
+// 多くのゲームでは、バナーが切り替わっても天井カウンターは引き継がれる。
+// ただし引き継がれるのは「同じ枠」の中だけで、キャラ枠と武器枠は別に進む。
+// そこでカウンターは個別のバナーではなく「天井枠(pityPool)」が持ち、
+// その枠に属する全バナーの記録をまとめて再生する。
+export function computePoolPity(pool, banners, gachaRecords) {
+  const since = pool.openingDate || ''
+  const bannerIds = new Set((banners || []).filter(b => b.poolId === pool.id).map(b => b.id))
+
+  const related = (gachaRecords || [])
+    .filter(r => {
+      if (r.date < since) return false
+      if (r.poolId) return r.poolId === pool.id
+      return bannerIds.has(r.bannerId)
+    })
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+
+  let state = { pityCurrent: Number(pool.openingPity) || 0, guaranteed: !!pool.openingGuaranteed }
+  for (const r of related) {
+    const res = applyPullToBanner(
+      { pityMax: pool.pityMax, pityCurrent: state.pityCurrent, guaranteed: state.guaranteed },
+      Number(r.pullCount) || 0,
+      pullOutcome(r),
+      r.obtainedAtPull
+    )
+    state = { pityCurrent: res.pityCurrent, guaranteed: res.guaranteed }
+  }
+  return state
+}
+
+export function withDerivedPoolPity(pools, banners, gachaRecords) {
+  return (pools || []).map(p => ({ ...p, ...computePoolPity(p, banners, gachaRecords) }))
+}
+
+// バナーに、所属する天井枠の状態を合成する
+export function withPoolInfo(banners, pools) {
+  const byId = new Map((pools || []).map(p => [p.id, p]))
+  return (banners || []).map(b => {
+    const pool = byId.get(b.poolId)
+    if (!pool) return b
+    return {
+      ...b,
+      pityMax: pool.pityMax,
+      pityCurrent: pool.pityCurrent,
+      guaranteed: pool.guaranteed,
+      costPerPull: b.costPerPull ?? pool.costPerPull,
+      system: b.system || pool.system,
+      poolName: pool.name
+    }
+  })
+}
+
 // 消費記録からガチャに該当するものだけ取り出す(天井計算に使う)
 export function gachaConsumptions(consumptions) {
   return (consumptions || []).filter(c => {
@@ -319,6 +371,13 @@ export const GAME_PRESETS = [
   // ---- ホヨバース系(ソフト天井 + 50/50 + すり抜け保証) ----
   {
     key: 'genshin', name: '原神', currencyName: '原石', yenPerCurrency: 1.85, verified: true,
+    // ガチャの副産物。星3武器でスターダスト、キャラ重複などでスターライトが貯まり、
+    // どちらも「紡がれた運命」(=ガチャ1回分)に交換できる。課金した資産の一部なので追跡する。
+    // 交換レートは月ごとの上限や改定があるため単価は既定で0とし、必要なら管理タブで設定する
+    byproducts: [
+      { id: 'stardust', name: 'スターダスト', yenPerUnit: 0 },
+      { id: 'starlight', name: 'スターライト', yenPerUnit: 0 }
+    ],
     banners: [
       { name: 'キャラクター(限定PU)', costPerPull: 160, pityMax: 90,
         system: { type: 'fiftyFifty', baseRate: 0.6, softPityStart: 74, softPityInc: 6, hardPity: 90, featuredRate: 50, guarantee: true } },
@@ -328,6 +387,10 @@ export const GAME_PRESETS = [
   },
   {
     key: 'hsr', name: '崩壊:スターレイル', currencyName: '星玉', yenPerCurrency: 1.85, verified: true,
+    byproducts: [
+      { id: 'stardust', name: '星のクズ', yenPerUnit: 0 },
+      { id: 'starlight', name: '星彩', yenPerUnit: 0 }
+    ],
     banners: [
       { name: 'キャラクター(限定PU)', costPerPull: 160, pityMax: 90,
         system: { type: 'fiftyFifty', baseRate: 0.6, softPityStart: 74, softPityInc: 6, hardPity: 90, featuredRate: 50, guarantee: true } },

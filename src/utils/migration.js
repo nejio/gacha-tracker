@@ -13,7 +13,39 @@
 // 移行は1回だけ行い、apps に schemaVersion を立てて再実行を防ぐ。
 // 旧コレクション(purchases / pulls)は削除せず残す。復元の手がかりになるため。
 
-export const SCHEMA_VERSION = 3
+export const SCHEMA_VERSION = 4
+
+// v1.6以前はバナーごとに天井カウンターを持っていたが、実際のゲームでは
+// バナーが切り替わっても同じ枠の中では天井が引き継がれる。
+// v1.7 で「天井枠(pityPools)」を導入し、カウンターは枠が持つようにした。
+// 既存のバナーは、天井回数・コスト・システムが同じものを同じ枠にまとめる。
+export function groupBannersIntoPools(banners) {
+  const groups = new Map()
+  for (const b of banners) {
+    const key = [b.pityMax || 0, b.costPerPull || 0, JSON.stringify(b.system || null)].join('|')
+    if (!groups.has(key)) groups.set(key, { banners: [], sample: b })
+    groups.get(key).banners.push(b)
+  }
+  return [...groups.values()].map(g => {
+    const b = g.sample
+    // 引き継がれていたはずのカウンターがバナー分割で分散している可能性があるため、
+    // その枠で最も進んでいる値を開始値として採用する
+    const leading = g.banners.reduce((m, x) => ((x.openingPity || 0) > (m.openingPity || 0) ? x : m), b)
+    return {
+      pool: {
+        name: g.banners.length === 1 ? b.name : `${b.name} ほか`,
+        pityMax: b.pityMax || 0,
+        costPerPull: b.costPerPull || 0,
+        system: b.system || null,
+        currencyId: b.currencyId || 'main',
+        openingPity: Number(leading.openingPity) || 0,
+        openingGuaranteed: !!leading.openingGuaranteed,
+        openingDate: leading.openingDate || ''
+      },
+      bannerIds: g.banners.map(x => x.id)
+    }
+  })
+}
 
 // v1.4.0 では消費の用途を tags(配列)で保存していたが、
 // 1件の消費に複数の用途が付くと数量の配分が決められず集計が実態とずれるため、
@@ -145,6 +177,18 @@ export async function runMigration({ apps, banners, purchases, pulls, consumptio
     if (patch) {
       await apis.consumptions.update(c.id, patch)
       tick('用途を変換')
+    }
+  }
+
+  // バナーを天井枠にまとめる(v4)
+  for (const app of targets) {
+    const appBanners = (banners || []).filter(b => b.appId === app.id && !b.poolId)
+    if (appBanners.length > 0 && apis.pityPools) {
+      for (const g of groupBannersIntoPools(appBanners)) {
+        const ref = await apis.pityPools.add({ appId: app.id, ...g.pool })
+        for (const id of g.bannerIds) await apis.banners.update(id, { poolId: ref.id })
+        tick('天井枠を作成')
+      }
     }
   }
 

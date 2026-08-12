@@ -5,7 +5,7 @@
 
 // 書き出し対象のコレクション。構造を変えたらここも合わせる
 export const BACKUP_COLLECTIONS = [
-  'apps', 'banners', 'purchases', 'pulls', 'schedules', 'budgets',
+  'apps', 'banners', 'pityPools', 'purchases', 'pulls', 'schedules', 'budgets',
   'acquisitions', 'exchanges', 'consumptions', 'adjustments'
 ]
 

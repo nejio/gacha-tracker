@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from './contexts/AuthContext'
 import { useUserCollection } from './hooks/useUserCollection'
-import { withDerivedPity, gachaConsumptions } from './utils/calc'
+import { withDerivedPoolPity, withPoolInfo, gachaConsumptions } from './utils/calc'
 import { withDerivedCurrencies } from './utils/currency'
 import { needsMigration, runMigration } from './utils/migration'
 import Login from './components/Login'
@@ -27,6 +27,7 @@ export default function App() {
 
   const appsApi = useUserCollection('apps', 'createdAt')
   const bannersApi = useUserCollection('banners', 'createdAt')
+  const pityPoolsApi = useUserCollection('pityPools', 'createdAt')   // 天井枠(カウンターを共有する単位)
   const schedulesApi = useUserCollection('schedules', 'createdAt')
   const budgetsApi = useUserCollection('budgets', 'createdAt')
   // 旧構造(移行元として読むだけ)
@@ -41,7 +42,7 @@ export default function App() {
   // 旧構造から新構造への移行(1回だけ実行される)
   useEffect(() => {
     if (!user) return
-    if (appsApi.loading || purchasesApi.loading || pullsApi.loading || bannersApi.loading || consumptionsApi.loading) return
+    if (appsApi.loading || purchasesApi.loading || pullsApi.loading || bannersApi.loading || consumptionsApi.loading || pityPoolsApi.loading) return
     if (appsApi.items.length === 0) return
     if (!needsMigration(appsApi.items)) return
     if (migrating) return
@@ -49,12 +50,12 @@ export default function App() {
     setMigrating({ done: 0, label: '準備中' })
     runMigration(
       { apps: appsApi.items, banners: bannersApi.items, purchases: purchasesApi.items, pulls: pullsApi.items, consumptions: consumptionsApi.items },
-      { apps: appsApi, banners: bannersApi, acquisitions: acquisitionsApi, exchanges: exchangesApi, consumptions: consumptionsApi },
+      { apps: appsApi, banners: bannersApi, pityPools: pityPoolsApi, acquisitions: acquisitionsApi, exchanges: exchangesApi, consumptions: consumptionsApi },
       { onProgress: (done, label) => setMigrating({ done, label }) }
     )
       .then(() => setMigrating(null))
       .catch(err => setMigrating({ error: err.message }))
-  }, [user, appsApi.loading, purchasesApi.loading, pullsApi.loading, bannersApi.loading, consumptionsApi.loading, appsApi.items])
+  }, [user, appsApi.loading, purchasesApi.loading, pullsApi.loading, bannersApi.loading, consumptionsApi.loading, pityPoolsApi.loading, appsApi.items])
 
   const records = useMemo(() => ({
     acquisitions: acquisitionsApi.items,
@@ -65,10 +66,13 @@ export default function App() {
 
   // 残高・天井は保存せず、記録から毎回計算する
   const apps = useMemo(() => withDerivedCurrencies(appsApi.items, records), [appsApi.items, records])
-  const banners = useMemo(
-    () => withDerivedPity(bannersApi.items, gachaConsumptions(consumptionsApi.items)),
-    [bannersApi.items, consumptionsApi.items]
+  // 天井カウンターは枠が持つ。バナーが切り替わっても同じ枠なら引き継がれる
+  const gachaRecords = useMemo(() => gachaConsumptions(consumptionsApi.items), [consumptionsApi.items])
+  const pityPools = useMemo(
+    () => withDerivedPoolPity(pityPoolsApi.items, bannersApi.items, gachaRecords),
+    [pityPoolsApi.items, bannersApi.items, gachaRecords]
   )
+  const banners = useMemo(() => withPoolInfo(bannersApi.items, pityPools), [bannersApi.items, pityPools])
 
   if (loading) return null
   if (!user) return <Login />
@@ -120,6 +124,8 @@ export default function App() {
             exchangesApi={exchangesApi}
             consumptionsApi={consumptionsApi}
             adjustmentsApi={adjustmentsApi}
+            pityPools={pityPools}
+            pityPoolsApi={pityPoolsApi}
           />
         )}
 
@@ -128,7 +134,7 @@ export default function App() {
             apps={apps}
             schedules={schedulesApi.items}
             schedulesApi={schedulesApi}
-            pulls={gachaConsumptions(consumptionsApi.items)}
+            pulls={gachaRecords}
             budgets={budgetsApi.items}
             budgetsApi={budgetsApi}
             onJumpToRecord={(sc) => { setRecordPrefill({ appId: sc.appId, scheduleId: sc.id, token: Date.now() }); setTab('record') }}
@@ -139,6 +145,7 @@ export default function App() {
           <HistoryScreen
             apps={apps}
             banners={banners}
+            pityPools={pityPools}
             acquisitions={acquisitionsApi.items}
             exchanges={exchangesApi.items}
             consumptions={consumptionsApi.items}
@@ -154,8 +161,10 @@ export default function App() {
             appsApi={appsApi}
             banners={banners}
             bannersApi={bannersApi}
+            pityPools={pityPools}
+            pityPoolsApi={pityPoolsApi}
             backupApis={{
-              apps: appsApi, banners: bannersApi, purchases: purchasesApi, pulls: pullsApi,
+              apps: appsApi, banners: bannersApi, pityPools: pityPoolsApi, purchases: purchasesApi, pulls: pullsApi,
               schedules: schedulesApi, budgets: budgetsApi,
               acquisitions: acquisitionsApi, exchanges: exchangesApi, consumptions: consumptionsApi,
               adjustments: adjustmentsApi
