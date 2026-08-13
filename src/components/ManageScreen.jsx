@@ -65,6 +65,7 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pityP
           name: b.name,
           pityMax: b.pityMax,
           costPerPull: b.costPerPull,
+          carryOver: b.carryOver !== false,   // バナーが切り替わっても天井を引き継ぐか
           openingPity: 0,
           openingGuaranteed: false,
           openingDate: new Date().toISOString(),
@@ -271,6 +272,14 @@ function PoolSection({ app, pools, pityPoolsApi, banners, bannersApi }) {
             <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 4 }}>
               1回 {pool.costPerPull}{unit}{poolBanners.length > 0 && ` ・ バナー${poolBanners.length}件`}
             </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 10, color: 'var(--text-dim)' }}>
+              <input
+                type="checkbox"
+                checked={pool.carryOver !== false}
+                onChange={e => pityPoolsApi.update(pool.id, { carryOver: e.target.checked })}
+              />
+              バナーが切り替わっても天井を引き継ぐ
+            </label>
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 11, color: 'var(--text-dim)', flexWrap: 'wrap' }}>
               開始時の天井

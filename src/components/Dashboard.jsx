@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { BarChart, Bar, XAxis, ResponsiveContainer, Tooltip } from 'recharts'
 import { totalAmount, monthlyTotal, currentMonthKey, monthlySeries, totalsByApp, formatYen } from '../utils/calc'
-import { consumptionByTag, poolTotal, inMonth } from '../utils/currency'
+import { consumptionByTag, poolTotal, inMonth, effectiveGachaBalance } from '../utils/currency'
 
 export default function Dashboard({ acquisitions, consumptions, apps, records }) {
   const thisMonth = currentMonthKey()
@@ -70,6 +70,20 @@ function BalanceSection({ apps }) {
         {apps.map(app => (
           <div key={app.id}>
             <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 6 }}>{app.name}</div>
+            {(() => {
+              // 課金通貨を交換して使うゲームは、合算した実質残高も示す
+              const eff = effectiveGachaBalance(app, 'main')
+              if (!eff || eff.convertible <= 0) return null
+              return (
+                <div style={{ fontSize: 11, color: 'var(--teal)', marginBottom: 6, paddingLeft: 8 }}>
+                  ガチャに使える実質残高{' '}
+                  <span className="mono" style={{ color: 'var(--gold)' }}>{eff.total.toLocaleString('ja-JP')}</span>
+                  <span style={{ color: 'var(--text-faint)' }}>
+                    {' '}({eff.sourceName}を交換した場合)
+                  </span>
+                </div>
+              )
+            })()}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {(app.currencies || []).map(c => {
                 const bal = c.balance || { paid: 0, free: 0 }

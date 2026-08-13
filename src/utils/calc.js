@@ -140,8 +140,17 @@ export function computePoolPity(pool, banners, gachaRecords) {
     })
     .sort((a, b) => String(a.date).localeCompare(String(b.date)))
 
+  // ウマ娘やブルアカのように、バナーごとに天井が独立するゲームもある。
+  // その場合は最後に引いたバナーの記録だけを再生する。
+  const carryOver = pool.carryOver !== false
+  let target = related
+  if (!carryOver) {
+    const lastBanner = [...related].reverse().find(r => r.bannerId)?.bannerId
+    if (lastBanner) target = related.filter(r => r.bannerId === lastBanner)
+  }
+
   let state = { pityCurrent: Number(pool.openingPity) || 0, guaranteed: !!pool.openingGuaranteed }
-  for (const r of related) {
+  for (const r of target) {
     const res = applyPullToBanner(
       { pityMax: pool.pityMax, pityCurrent: state.pityCurrent, guaranteed: state.guaranteed },
       Number(r.pullCount) || 0,
@@ -367,115 +376,188 @@ export const defaultTargetOptions = () => ([
 //
 // 円換算レートは「まとめ買いや初回ボーナスを使わない標準的な購入」を基準にした概算です。
 // いずれの値も登録後にアプリ内で編集できます。
+// ============ ゲーム別マスターデータ ============
+// 各ゲームのガチャ仕様プリセット。アプリ登録時に選ぶと確率・天井・通貨が自動設定される。
+//
+// verified: true  … 公式確率表記や複数の攻略サイトで数値を確認済み
+// verified: false … 情報が少ない/仕様が特殊なため推定値。UIに「要確認」を表示する
+//
+// 通貨の階層(ゲームにより2〜4層):
+//   purchaseCurrencyName … 課金でのみ買える通貨(例: 創世結晶、モノクローム)
+//   currencyName         … ガチャの計算基準にする通貨(例: 原石、ジュエル)
+//   byproducts           … ガチャの副産物。ガチャ用アイテムに交換できるため資産として追跡する
+//
+// ガチャ用アイテム(紡がれた運命など)は currencyName × costPerPull で換算できるため、
+// 記録の手間を抑える観点から個別の通貨としては持たない(README「通貨と記録の構造」参照)。
+//
+// 円換算レートはまとめ買いや初回ボーナスを使わない標準的な購入を基準にした概算。
+// いずれの値も登録後にアプリ内で編集できる。
 export const GAME_PRESETS = [
   // ---- ホヨバース系(ソフト天井 + 50/50 + すり抜け保証) ----
   {
     key: 'genshin', name: '原神', currencyName: '原石', yenPerCurrency: 1.85, verified: true,
-    // ガチャの副産物。星3武器でスターダスト、キャラ重複などでスターライトが貯まり、
-    // どちらも「紡がれた運命」(=ガチャ1回分)に交換できる。課金した資産の一部なので追跡する。
-    // 交換レートは月ごとの上限や改定があるため単価は既定で0とし、必要なら管理タブで設定する
+    // 課金で「創世結晶」を買い、1:1で「原石」に交換。原石160個でガチャ用の「紡がれた運命」1個
+    purchaseCurrencyName: '創世結晶', currencyPerPurchaseUnit: 1,
+    // 副産物: ★3武器でスターダスト15個、★4以上の重複でスターライト。
+    // スターダスト75個(月5個まで)、スターライト5個で紡がれた運命1個に交換できる
     byproducts: [
       { id: 'stardust', name: 'スターダスト', yenPerUnit: 0 },
       { id: 'starlight', name: 'スターライト', yenPerUnit: 0 }
     ],
     banners: [
-      { name: 'キャラクター(限定PU)', costPerPull: 160, pityMax: 90,
+      { name: 'キャラクター(限定PU)', costPerPull: 160, pityMax: 90, carryOver: true,
         system: { type: 'fiftyFifty', baseRate: 0.6, softPityStart: 74, softPityInc: 6, hardPity: 90, featuredRate: 50, guarantee: true } },
-      { name: '武器(限定PU)', costPerPull: 160, pityMax: 80,
+      { name: '武器(限定PU)', costPerPull: 160, pityMax: 80, carryOver: true,
         system: { type: 'fiftyFifty', baseRate: 0.7, softPityStart: 63, softPityInc: 7, hardPity: 80, featuredRate: 50, guarantee: true } }
     ]
   },
   {
     key: 'hsr', name: '崩壊:スターレイル', currencyName: '星玉', yenPerCurrency: 1.85, verified: true,
+    purchaseCurrencyName: '往日の夢華', currencyPerPurchaseUnit: 1,
+    // 副産物: ★3光円錐で燃えさしのエンバー、★4以上で消えない星芒
     byproducts: [
-      { id: 'stardust', name: '星のクズ', yenPerUnit: 0 },
-      { id: 'starlight', name: '星彩', yenPerUnit: 0 }
+      { id: 'ember', name: '燃えさしのエンバー', yenPerUnit: 0 },
+      { id: 'starlight', name: '消えない星芒', yenPerUnit: 0 }
     ],
     banners: [
-      { name: 'キャラクター(限定PU)', costPerPull: 160, pityMax: 90,
+      { name: 'キャラクター(限定PU)', costPerPull: 160, pityMax: 90, carryOver: true,
         system: { type: 'fiftyFifty', baseRate: 0.6, softPityStart: 74, softPityInc: 6, hardPity: 90, featuredRate: 50, guarantee: true } },
-      { name: '光円錐(限定PU)', costPerPull: 160, pityMax: 80,
+      { name: '光円錐(限定PU)', costPerPull: 160, pityMax: 80, carryOver: true,
         system: { type: 'fiftyFifty', baseRate: 0.8, softPityStart: 63, softPityInc: 7, hardPity: 80, featuredRate: 75, guarantee: true } }
     ]
   },
   {
-    key: 'zzz', name: 'ゼンレスゾーンゼロ', currencyName: 'モノク', yenPerCurrency: 1.85, verified: true,
+    key: 'zzz', name: 'ゼンレスゾーンゼロ', currencyName: 'ポリクローム', yenPerCurrency: 1.85, verified: true,
+    purchaseCurrencyName: 'モノクローム', currencyPerPurchaseUnit: 1,
+    // 副産物: A級以上の重複で余波シグナル、B級音動機の重複で残響シグナル20個
+    byproducts: [
+      { id: 'residual', name: '余波シグナル', yenPerUnit: 0 },
+      { id: 'echo', name: '残響シグナル', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: 'エージェント(限定PU)', costPerPull: 160, pityMax: 90,
+      { name: 'エージェント(限定PU)', costPerPull: 160, pityMax: 90, carryOver: true,
         system: { type: 'fiftyFifty', baseRate: 0.6, softPityStart: 74, softPityInc: 6, hardPity: 90, featuredRate: 50, guarantee: true } },
-      { name: '音動機(限定PU)', costPerPull: 160, pityMax: 80,
+      { name: '音動機(限定PU)', costPerPull: 160, pityMax: 80, carryOver: true,
         system: { type: 'fiftyFifty', baseRate: 1.0, softPityStart: 65, softPityInc: 7, hardPity: 80, featuredRate: 75, guarantee: true } }
     ]
   },
   {
     key: 'wuwa', name: '鳴潮', currencyName: '星声', yenPerCurrency: 1.85, verified: true,
+    // 課金で「月相」を買い、1:1で「星声」に交換。星声160個でガチャ石(金髄の波模様など)1個
+    purchaseCurrencyName: '月相', currencyPerPurchaseUnit: 1,
+    // 副産物: ガチャで得られる2種類の珊瑚。海市交換所でガチャ石に交換できる
+    byproducts: [
+      { id: 'coral1', name: '漂流する珊瑚', yenPerUnit: 0 },
+      { id: 'coral2', name: '無音の珊瑚', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: '共鳴者(限定PU)', costPerPull: 160, pityMax: 80,
+      { name: '共鳴者(限定PU)', costPerPull: 160, pityMax: 80, carryOver: true,
         system: { type: 'fiftyFifty', baseRate: 0.8, softPityStart: 66, softPityInc: 4, hardPity: 80, featuredRate: 50, guarantee: true } },
-      { name: '武器(限定PU)', costPerPull: 160, pityMax: 80,
+      { name: '武器(限定PU)', costPerPull: 160, pityMax: 80, carryOver: true,
         system: { type: 'spark', pickupRate: 0.8, ceiling: 80 } }
     ]
   },
   {
     key: 'p5x', name: 'ペルソナ5: The Phantom X', currencyName: '自在結晶', yenPerCurrency: 1.9, verified: true,
+    // 課金で「異界宝珠」を買い、1:1で「自在結晶」に交換
+    purchaseCurrencyName: '異界宝珠', currencyPerPurchaseUnit: 1,
+    // 副産物: ガチャ重複で「認知の残響」。ショップでガチャチケットに交換できる
+    byproducts: [
+      { id: 'echo', name: '認知の残響', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: 'キャラ(限定契約)', costPerPull: 150, pityMax: 110,
-        system: { type: 'fiftyFifty', baseRate: 0.6, softPityStart: 66, softPityInc: 5, hardPity: 80, featuredRate: 50, guarantee: true, maxPullsOverride: 110 } }
+      // 80連で★5確定、160連でPU確定。同タイプのバナー間で引き継ぎあり
+      { name: 'キャラ(80連形式)', costPerPull: 150, pityMax: 80, carryOver: true,
+        system: { type: 'fiftyFifty', baseRate: 0.6, softPityStart: 66, softPityInc: 5, hardPity: 80, featuredRate: 50, guarantee: true, maxPullsOverride: 160 } },
+      // 110連で100%PU確定(すり抜けなし)
+      { name: 'キャラ(110連確定形式)', costPerPull: 150, pityMax: 110, carryOver: true,
+        system: { type: 'spark', pickupRate: 0.6, ceiling: 110 } }
     ]
   },
 
-  // ---- 天井交換型 ----
+  // ---- 天井交換型(Ptを貯めて対象と交換) ----
   {
     key: 'fgo', name: 'Fate/Grand Order', currencyName: '聖晶石', yenPerCurrency: 60, verified: true,
+    // 副産物: ★3以上のカード売却でマナプリズム。交換所で呼符と交換できる(月5枚まで)
+    byproducts: [
+      { id: 'mana', name: 'マナプリズム', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: 'ピックアップ召喚', costPerPull: 3, pityMax: 330,
+      { name: 'ピックアップ召喚', costPerPull: 3, pityMax: 330, carryOver: false,
         system: { type: 'spark', pickupRate: 0.8, ceiling: 330 } }
     ]
   },
   {
     key: 'umamusume', name: 'ウマ娘 プリティーダービー', currencyName: 'ジュエル', yenPerCurrency: 1.2, verified: true,
+    // 副産物: ガチャPtが終了時にクローバーへ変換。200個でガチャチケット1枚(月2枚まで)
+    byproducts: [
+      { id: 'clover', name: 'クローバー', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: '育成ウマ娘(PU)', costPerPull: 150, pityMax: 200,
+      { name: '育成ウマ娘(PU)', costPerPull: 150, pityMax: 200, carryOver: false,
         system: { type: 'spark', pickupRate: 0.75, ceiling: 200 } },
-      { name: 'サポートカード(PU)', costPerPull: 150, pityMax: 200,
+      { name: 'サポートカード(PU)', costPerPull: 150, pityMax: 200, carryOver: false,
         system: { type: 'spark', pickupRate: 0.75, ceiling: 200 } }
     ]
   },
   {
     key: 'bluearchive', name: 'ブルーアーカイブ', currencyName: '青輝石', yenPerCurrency: 1.9, verified: true,
+    // 副産物: 呼び出しPtが期間終了時にキーストーンのカケラへ変換
+    byproducts: [
+      { id: 'keystone', name: 'キーストーンのカケラ', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: 'ピックアップ募集', costPerPull: 120, pityMax: 200,
+      { name: 'ピックアップ募集', costPerPull: 120, pityMax: 200, carryOver: false,
         system: { type: 'spark', pickupRate: 0.7, ceiling: 200 } }
     ]
   },
   {
     key: 'gakumas', name: '学園アイドルマスター', currencyName: 'ジュエル', yenPerCurrency: 1.2, verified: true,
+    // 副産物: ガチャ1回でフラワー10個。100個でプラチナガチャチケット1枚(月10枚まで)
+    byproducts: [
+      { id: 'flower', name: 'フラワー', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: 'Pアイドル(限定PU)', costPerPull: 250, pityMax: 200,
+      { name: 'Pアイドル(限定PU)', costPerPull: 250, pityMax: 200, carryOver: false,
         system: { type: 'spark', pickupRate: 0.75, ceiling: 200 } },
-      { name: 'サポートカード(PU)', costPerPull: 250, pityMax: 200,
+      { name: 'サポートカード(PU)', costPerPull: 250, pityMax: 200, carryOver: false,
         system: { type: 'spark', pickupRate: 1.0, ceiling: 200 } }
     ]
   },
   {
     key: 'priconne', name: 'プリンセスコネクト!Re:Dive', currencyName: 'ジュエル', yenPerCurrency: 1.0, verified: true,
+    // 副産物: キャラ重複で女神の秘石(メモリーピース交換用。ガチャ券には交換できない)
+    byproducts: [
+      { id: 'goddess', name: '女神の秘石', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: 'プリンセスフェス/限定PU', costPerPull: 150, pityMax: 200,
+      { name: 'プリンセスフェス/限定PU', costPerPull: 150, pityMax: 200, carryOver: false,
         system: { type: 'spark', pickupRate: 0.7, ceiling: 200 } }
     ]
   },
   {
-    key: 'gbf', name: 'グランブルーファンタジー', currencyName: 'クリスタル', yenPerCurrency: 1.0, verified: true,
+    key: 'gbf', name: 'グランブルーファンタジー', currencyName: '宝晶石', yenPerCurrency: 1.0, verified: true,
+    // 副産物: 御印(1回1個、300個で天井交換)。★3/★4重複でブロンズ/シルバー/ゴールドムーン
+    byproducts: [
+      { id: 'bronzemoon', name: 'ブロンズムーン', yenPerUnit: 0 },
+      { id: 'silvermoon', name: 'シルバームーン', yenPerUnit: 0 },
+      { id: 'goldmoon', name: 'ゴールドムーン', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: 'レジェンドフェス/限定PU', costPerPull: 300, pityMax: 300,
+      { name: 'レジェンドフェス/限定PU', costPerPull: 300, pityMax: 300, carryOver: false,
         system: { type: 'spark', pickupRate: 0.5, ceiling: 300 } }
     ]
   },
   {
     key: 'nikke', name: '勝利の女神:NIKKE', currencyName: 'ジュエル', yenPerCurrency: 1.0, verified: true,
+    // 副産物: 特殊募集1回でゴールドマイレージ1枚。200枚でPUキャラと直接交換でき、
+    // バナーをまたいで無期限に持ち越せる(実質的にこれが天井)
+    byproducts: [
+      { id: 'goldmileage', name: 'ゴールドマイレージ', yenPerUnit: 0 },
+      { id: 'silvermileage', name: 'シルバーマイレージ', yenPerUnit: 0 }
+    ],
     banners: [
-      // 天井は無いが、ガチャ1回につき1枚貯まるマイレージ200枚で交換できるため実質200連天井
-      { name: 'ピックアップ募集', costPerPull: 300, pityMax: 200,
+      { name: 'ピックアップ募集', costPerPull: 300, pityMax: 200, carryOver: true,
         system: { type: 'spark', pickupRate: 2.0, ceiling: 200 } }
     ]
   },
@@ -483,92 +565,140 @@ export const GAME_PRESETS = [
   // ---- アークナイツ系(ソフト天井 + PU確定回数) ----
   {
     key: 'arknights', name: 'アークナイツ', currencyName: '合成玉', yenPerCurrency: 0.83, verified: true,
+    // 課金で「純正源石」を買い、1個=合成玉180個に交換
+    purchaseCurrencyName: '純正源石', currencyPerPurchaseUnit: 180,
+    // 副産物: ★4以上の重複などで上級/一般資格証。上級資格証ショップでスカウト券に交換できる
+    byproducts: [
+      { id: 'cert_high', name: '上級資格証', yenPerUnit: 0 },
+      { id: 'cert_normal', name: '一般資格証', yenPerUnit: 0 }
+    ],
     banners: [
-      // 星6は2%開始・51連目から2%ずつ上昇し99連で確定。150連でPU未入手なら次の星6がPU確定
-      { name: 'イベントスカウト(単独PU)', costPerPull: 600, pityMax: 150,
-        system: { type: 'fiftyFifty', baseRate: 2.0, softPityStart: 51, softPityInc: 2, hardPity: 99, featuredRate: 50, guarantee: false, maxPullsOverride: 249 } },
-      { name: 'リミテッドスカウト', costPerPull: 600, pityMax: 300,
+      // 星6は2%開始・51連目から2%ずつ上昇。天井カウントはバナー間で引き継がれる
+      { name: 'イベントスカウト(単独PU)', costPerPull: 600, pityMax: 99, carryOver: true,
+        system: { type: 'fiftyFifty', baseRate: 2.0, softPityStart: 51, softPityInc: 2, hardPity: 99, featuredRate: 50, guarantee: false } },
+      // 限定スカウトは限定契約証300枚で指名交換。引き継ぎなし
+      { name: 'リミテッドスカウト', costPerPull: 600, pityMax: 300, carryOver: false,
         system: { type: 'fiftyFifty', baseRate: 2.0, softPityStart: 51, softPityInc: 2, hardPity: 99, featuredRate: 70, guarantee: false, maxPullsOverride: 300 } }
     ]
   },
   {
-    // 2通貨制: 課金で「展延源石」を買い、1個を「赤晶石」75個に交換してガチャに使う
-    // 源石交換所は1万円でおよそ29回分のため、展延源石1個あたり約52円(赤晶石1個あたり約0.69円)
     key: 'endfield', name: 'アークナイツ:エンドフィールド',
-    currencyName: '赤晶石', yenPerCurrency: 0.69, verified: true,
+    currencyName: '赤晶玉', yenPerCurrency: 0.69, verified: true,
     purchaseCurrencyName: '展延源石', currencyPerPurchaseUnit: 75,
+    // 副産物: オペレーター招集・重複で各種配給。配給交換所でガチャ券などに交換できる
+    byproducts: [
+      { id: 'ration_guarantee', name: '保証配給', yenPerUnit: 0 },
+      { id: 'ration_premium', name: '高級配給', yenPerUnit: 0 }
+    ],
     banners: [
-      // 80連で★6確定(引き継ぎあり)、120連でPU確定(引き継ぎなし)。1回500赤晶石
-      { name: '特別スカウト(限定PU)', costPerPull: 500, pityMax: 120,
+      // 80連で★6確定(この分はバナー間で引き継ぎあり)、120連でPU確定(引き継ぎなし)
+      { name: '特別スカウト(限定PU)', costPerPull: 500, pityMax: 80, carryOver: true,
         system: { type: 'fiftyFifty', baseRate: 0.8, softPityStart: 66, softPityInc: 5, hardPity: 80, featuredRate: 50, guarantee: true, maxPullsOverride: 120 } }
     ]
   },
 
-  // ---- 以下は情報が少ない、または仕様が特殊なため推定値(要確認) ----
+  // ---- その他 ----
   {
-    key: 'nte', name: 'NTE: Neverness to Everness', currencyName: 'ガチャ通貨', yenPerCurrency: 1.85, verified: false,
+    key: 'nte', name: 'NTE: Neverness to Everness', currencyName: '円石', yenPerCurrency: 1.85, verified: true,
+    // 課金で「異晶」を買い、1:1で「円石」に交換。円石160個でサイコロ(ガチャ用アイテム)1個
+    purchaseCurrencyName: '異晶', currencyPerPurchaseUnit: 1,
+    // 副産物: 迷走ピース(70個で本質サイコロ1個、月5個まで)、次元ピース(無制限)
+    byproducts: [
+      { id: 'lost_piece', name: '迷走ピース', yenPerUnit: 0 },
+      { id: 'dim_piece', name: '次元ピース', yenPerUnit: 0 }
+    ],
     banners: [
-      // 限定バナーはSランクを引けば100%PU確定(すり抜けなし)とされる
-      { name: '限定バナー', costPerPull: 160, pityMax: 80,
-        system: { type: 'spark', pickupRate: 1.0, ceiling: 80 } }
+      // Sランク排出時は100%PU確定(すり抜けなし)。バナー更新でも天井を引き継ぐ
+      { name: 'キャラクター(限定PU)', costPerPull: 160, pityMax: 90, carryOver: true,
+        system: { type: 'fiftyFifty', baseRate: 0.6, softPityStart: 71, softPityInc: 6, hardPity: 90, featuredRate: 100, guarantee: true } },
+      { name: '武器・弧盤', costPerPull: 160, pityMax: 80, carryOver: true,
+        system: { type: 'spark', pickupRate: 0.8, ceiling: 80 } }
     ]
   },
   {
-    key: 'mugen', name: 'Project Mugen', currencyName: 'ガチャ通貨', yenPerCurrency: 1.85, verified: false,
+    key: 'heavenburns', name: 'ヘブンバーンズレッド', currencyName: 'クォーツ', yenPerCurrency: 1.2, verified: true,
+    // 副産物: ガチャPtが期間終了時に万能スタイルピースへ変換
+    byproducts: [
+      { id: 'stylepiece', name: '万能スタイルピース', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: '限定バナー', costPerPull: 160, pityMax: 90,
-        system: { type: 'fiftyFifty', baseRate: 0.6, softPityStart: 74, softPityInc: 6, hardPity: 90, featuredRate: 50, guarantee: true } }
+      { name: 'ピックアップガチャ', costPerPull: 300, pityMax: 200, carryOver: false,
+        system: { type: 'spark', pickupRate: 0.875, ceiling: 200 } }
     ]
   },
   {
-    key: 'heavenburns', name: 'ヘブンバーンズレッド', currencyName: 'クオンタムキューブ', yenPerCurrency: 1.2, verified: false,
+    key: 'monst', name: 'モンスターストライク', currencyName: 'オーブ', yenPerCurrency: 100, verified: true,
+    // 副産物: ★4以下の獲得でホシ玉のカケラ1個。50個で★5以上確定のホシ玉ガチャが発動する。
+    // このカケラは全ガチャ共通で持ち越せるため、天井もバナー間で引き継がれる扱いにする
+    byproducts: [
+      { id: 'hoshitama', name: 'ホシ玉のカケラ', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: 'ピックアップガチャ', costPerPull: 250, pityMax: 0,
+      { name: '限定ガチャ', costPerPull: 5, pityMax: 50, carryOver: true,
+        system: { type: 'spark', pickupRate: 0.6, ceiling: 50 } }
+    ]
+  },
+  {
+    key: 'pad', name: 'パズル&ドラゴンズ', currencyName: '魔法石', yenPerCurrency: 85, verified: true,
+    // カウント型の天井は無く、モンスター交換所でのキャラ差し出し交換が実質的な天井
+    byproducts: [
+      { id: 'mp', name: 'モンスターポイント', yenPerUnit: 0 }
+    ],
+    banners: [
+      { name: 'フェス限ガチャ', costPerPull: 5, pityMax: 0, carryOver: false,
         system: { type: 'spark', pickupRate: 1.0, ceiling: 0 } }
     ]
   },
   {
-    key: 'monst', name: 'モンスターストライク', currencyName: 'オーブ', yenPerCurrency: 100, verified: false,
+    key: 'ptcgp', name: 'Pokémon TCG Pocket', currencyName: 'ポケゴールド', yenPerCurrency: 17, verified: true,
+    // パック開封型。1パック=6ポケゴールド。開封ごとに5ptが貯まり、
+    // 最大2500pt(=500パック)で好きなカードと直接交換できる(これが実質の天井)
+    byproducts: [
+      { id: 'packpoint', name: 'パック開封ポイント', yenPerUnit: 0 }
+    ],
     banners: [
-      // 天井なし。限定キャラの排出率は約0.6%とされる
-      { name: '限定ガチャ', costPerPull: 5, pityMax: 0,
-        system: { type: 'spark', pickupRate: 0.6, ceiling: 0 } }
+      { name: 'パック開封', costPerPull: 6, pityMax: 500, carryOver: true,
+        system: { type: 'spark', pickupRate: 0.4, ceiling: 500 } }
     ]
   },
   {
-    key: 'pad', name: 'パズル&ドラゴンズ', currencyName: '魔法石', yenPerCurrency: 85, verified: false,
+    key: 'spira', name: 'プロ野球スピリッツA', currencyName: 'エナジー', yenPerCurrency: 4.0, verified: true,
+    // 副産物なし。ステップアップの確定枠方式でカウント型の天井は無い
     banners: [
-      { name: 'フェス限ガチャ', costPerPull: 5, pityMax: 0,
+      { name: 'スカウト(PU)', costPerPull: 25, pityMax: 0, carryOver: false,
         system: { type: 'spark', pickupRate: 1.0, ceiling: 0 } }
     ]
   },
   {
-    key: 'ptcgp', name: 'Pokémon TCG Pocket', currencyName: 'パック砂時計', yenPerCurrency: 12, verified: false,
+    key: 'dqwalk', name: 'ドラゴンクエストウォーク', currencyName: 'ジェム', yenPerCurrency: 1.0, verified: true,
+    // 副産物: 10連1回ごとにスラミチスタンプ1個。スタンプ数で★5やPU★5の確定枠が発生する
+    byproducts: [
+      { id: 'stamp', name: 'スラミチスタンプ', yenPerUnit: 0 }
+    ],
     banners: [
-      // パック開封型のため通常のガチャとは仕様が異なる。目当てのカード1枚あたりの概算
-      { name: 'パック開封', costPerPull: 12, pityMax: 0,
-        system: { type: 'spark', pickupRate: 1.0, ceiling: 0 } }
+      // 10連10回目でPU★5確定 = 100連相当を天井とみなす
+      { name: 'ふくびき(PU)', costPerPull: 300, pityMax: 100, carryOver: false,
+        system: { type: 'spark', pickupRate: 0.6, ceiling: 100 } }
     ]
   },
   {
-    key: 'spira', name: 'プロ野球スピリッツA', currencyName: 'エナジー', yenPerCurrency: 100, verified: false,
+    key: 'ensemble', name: 'あんさんぶるスターズ!! Music', currencyName: 'ダイヤ', yenPerCurrency: 10, verified: true,
+    // 副産物: スカウト1回でセレクトコイン1枚。300枚で対象★5と交換(=天井)
+    byproducts: [
+      { id: 'selectcoin', name: 'セレクトコイン', yenPerUnit: 0 }
+    ],
     banners: [
-      { name: 'スカウト(PU)', costPerPull: 5, pityMax: 0,
-        system: { type: 'spark', pickupRate: 1.0, ceiling: 0 } }
+      { name: 'スカウト(PU)', costPerPull: 30, pityMax: 300, carryOver: false,
+        system: { type: 'spark', pickupRate: 1.5, ceiling: 300 } }
     ]
   },
   {
-    key: 'dqwalk', name: 'ドラゴンクエストウォーク', currencyName: 'ジェム', yenPerCurrency: 1.0, verified: false,
+    key: 'mugen', name: '無限大ANANTA (旧 Project Mugen)', currencyName: '-', yenPerCurrency: 0, verified: false,
+    // 開発元より「キャラクターガチャを設置しない」方針が示されている。
+    // ガチャ通貨体系が存在しない見込みのため、記録用の枠のみ用意する
     banners: [
-      { name: 'ふくびき(PU)', costPerPull: 300, pityMax: 0,
-        system: { type: 'spark', pickupRate: 1.0, ceiling: 0 } }
-    ]
-  },
-  {
-    key: 'ensemble', name: 'あんさんぶるスターズ!! Music', currencyName: 'ダイヤ', yenPerCurrency: 1.2, verified: false,
-    banners: [
-      { name: 'スカウト(PU)', costPerPull: 250, pityMax: 300,
-        system: { type: 'spark', pickupRate: 1.0, ceiling: 300 } }
+      { name: '(ガチャ非搭載の方針)', costPerPull: 0, pityMax: 0, carryOver: false,
+        system: { type: 'manual', expectedPulls: 0, pityMax: 0 } }
     ]
   }
 ]

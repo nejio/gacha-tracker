@@ -254,6 +254,36 @@ export function adjustmentDiffs(app, records) {
   return out
 }
 
+// ガチャに使える実質的な残高を求める。
+// 原神やZZZのように「課金通貨を1:1でガチャ通貨に交換して使う」ゲームでは、
+// ゲーム内で残高が別々に表示されるため、そのままだとユーザーが足し算する必要がある。
+// 交換すれば使える分を合算して「実質いくら引けるか」を示す。
+export function effectiveGachaBalance(app, currencyId) {
+  const currencies = appCurrencies(app)
+  const target = currencies.find(c => c.id === currencyId)
+  if (!target) return null
+
+  const own = target.total ?? poolTotal(target.balance)
+  const rate = Number(app.currencyPerPurchaseUnit) || 0
+
+  // 課金通貨からの交換で増やせる分(ガチャ通貨が対象のときのみ)
+  const source = currencies.find(c => c.id === 'purchase')
+  if (currencyId !== 'main' || !source || rate <= 0) {
+    return { own, convertible: 0, total: own, sourceName: null, sourceQty: 0, rate }
+  }
+
+  const sourceQty = source.total ?? poolTotal(source.balance)
+  const convertible = sourceQty * rate
+  return {
+    own,
+    convertible,
+    total: own + convertible,
+    sourceName: source.name,
+    sourceQty,
+    rate
+  }
+}
+
 // 用途の初期候補
 export const DEFAULT_TAGS = ['ガチャ', 'スタミナ回復', 'パス・月額', '装備・強化', 'その他']
 

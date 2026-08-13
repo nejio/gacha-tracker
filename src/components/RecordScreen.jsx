@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import PityGauge from './PityGauge'
 import { applyPullToBanner } from '../utils/calc'
-import { appCurrencies, poolTotal, DEFAULT_TAGS, usedTags } from '../utils/currency'
+import { appCurrencies, poolTotal, DEFAULT_TAGS, usedTags, effectiveGachaBalance } from '../utils/currency'
 
 // 多くの人が意識するのは「課金する時」と「ガチャを引く時」の2つなので、
 // その2つを主軸に置き、それ以外の記録は任意の詳細として控えめに配置する
@@ -146,17 +146,29 @@ function BalanceCheck({ app, currencyId, value, onChange, willSpend = 0, label }
 }
 
 // 選択中の通貨の残高(有償・無償の内訳つき)
-function BalanceNote({ app, currencyId }) {
+// 課金通貨を交換して使うゲームでは、交換すれば使える分も合わせた「実質残高」を示す。
+// ゲーム内では別々に表示されるため、ユーザーが自分で足し算しなくて済むようにする。
+function BalanceNote({ app, currencyId, showEffective }) {
   if (!app) return null
   const c = (app.currencies || []).find(x => x.id === currencyId)
   if (!c) return null
   const total = c.total ?? poolTotal(c.balance)
+  const eff = showEffective ? effectiveGachaBalance(app, currencyId) : null
+  const hasSource = eff && eff.convertible > 0
+
   return (
     <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>
       現在の残高: <span className="mono" style={{ color: 'var(--gold)' }}>{total.toLocaleString('ja-JP')}{c.name}</span>
       <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>
         {' '}(有償 {(c.balance?.paid || 0).toLocaleString('ja-JP')} / 無償 {(c.balance?.free || 0).toLocaleString('ja-JP')})
       </span>
+      {hasSource && (
+        <div style={{ fontSize: 11, marginTop: 4, color: 'var(--teal)' }}>
+          {eff.sourceName} {eff.sourceQty.toLocaleString('ja-JP')} を交換すると
+          <span className="mono" style={{ color: 'var(--gold)' }}> 実質 {eff.total.toLocaleString('ja-JP')}{c.name}</span>
+          {' '}まで使えます
+        </div>
+      )}
     </div>
   )
 }
@@ -603,7 +615,7 @@ function ConsumeForm({ apps, banners, schedules, prefill, consumptions, bannersA
         </Field>
       )}
 
-      <BalanceNote app={app} currencyId={currencyId} />
+      <BalanceNote app={app} currencyId={currencyId} showEffective />
 
       {isGacha && appPools.length > 0 && (
         <Field label="天井枠">
