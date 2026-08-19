@@ -21,10 +21,14 @@ export default function HistoryScreen({
     return appCurrencies(app).find(c => c.id === currencyId)?.name || ''
   }
 
+  // シンプルモードのアプリでは、通貨のやり取りは画面に出さない(記録は残っている)
+  const isSimple = (appId) => (appById.get(appId)?.trackingLevel || 'simple') === 'simple'
+
   const merged = [
     ...acquisitions.map(r => ({ ...r, kind: 'acq' })),
-    ...exchanges.map(r => ({ ...r, kind: 'exc' })),
-    ...consumptions.map(r => ({ ...r, kind: 'con' }))
+    ...exchanges.filter(r => !isSimple(r.appId)).map(r => ({ ...r, kind: 'exc' })),
+    // シンプルモードではガチャの記録(回数・天井)だけ残す
+    ...consumptions.filter(r => !isSimple(r.appId) || r.pullCount > 0).map(r => ({ ...r, kind: 'con' }))
   ].sort((a, b) => new Date(b.date) - new Date(a.date))
 
   // 残高・天井は記録から都度計算されるため削除は記録を消すだけでよいが、影響が分かるよう提示する
@@ -87,16 +91,21 @@ export default function HistoryScreen({
                     {item.isFree ? '無償' : formatYen(item.amountYen)}
                   </span>
                 )}
-                {item.kind === 'con' && (
+                {item.kind === 'con' && item.quantity > 0 && (
                   <span className="mono" style={{ color: 'var(--teal)', fontSize: 15 }}>
                     -{item.quantity.toLocaleString('ja-JP')}{currencyName(item.appId, item.currencyId)}
+                  </span>
+                )}
+                {item.kind === 'con' && !item.quantity && item.pullCount > 0 && (
+                  <span className="mono" style={{ color: 'var(--teal)', fontSize: 15 }}>
+                    {item.pullCount}連
                   </span>
                 )}
               </div>
 
               <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
                 {new Date(item.date).toLocaleDateString('ja-JP')}
-                {item.kind === 'acq' && ` ・ +${item.quantity.toLocaleString('ja-JP')}${currencyName(item.appId, item.currencyId)}`}
+                {item.kind === 'acq' && item.quantity > 0 ? ` ・ +${item.quantity.toLocaleString('ja-JP')}${currencyName(item.appId, item.currencyId)}` : ''}
                 {item.kind === 'exc' && ` ・ ${item.fromQty.toLocaleString('ja-JP')}${currencyName(item.appId, item.fromCurrencyId)} → ${item.toQty.toLocaleString('ja-JP')}${currencyName(item.appId, item.toCurrencyId)}`}
                 {item.kind === 'con' && item.pullCount ? ` ・ ${item.pullCount}連` : ''}
                 {item.kind === 'con' && item.targetItem ? ` ・ ${item.targetItem}` : ''}

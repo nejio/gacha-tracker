@@ -10,6 +10,7 @@ export default function Dashboard({ acquisitions, consumptions, apps, records })
   const cumulative = useMemo(() => totalAmount(acquisitions), [acquisitions])
   const series = useMemo(() => monthlySeries(acquisitions, 6), [acquisitions])
   const byApp = useMemo(() => totalsByApp(acquisitions, apps), [acquisitions, apps])
+  const fullApps = useMemo(() => apps.filter(a => (a.trackingLevel || 'simple') === 'full'), [apps])
 
   return (
     <div style={{ padding: '20px 16px 8px' }}>
@@ -55,17 +56,18 @@ export default function Dashboard({ acquisitions, consumptions, apps, records })
         </div>
       </Section>
 
-      <BalanceSection apps={apps} />
-      <UsageSection apps={apps} consumptions={consumptions} acquisitions={acquisitions} records={records} />
+      {/* 残高と用途の内訳は、詳細モードで記録しているアプリだけが対象 */}
+      <BalanceSection apps={fullApps} />
+      <UsageSection apps={fullApps} consumptions={consumptions} acquisitions={acquisitions} records={records} />
     </div>
   )
 }
 
 // 通貨の残高。課金で得た資産がいくら残っているかを有償・無償の内訳つきで見る
 function BalanceSection({ apps }) {
+  if (apps.length === 0) return null   // 詳細モードのアプリが無ければ表示しない
   return (
     <Section title="通貨の残高">
-      {apps.length === 0 && <EmptyNote text="まずはアプリを登録してください" />}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         {apps.map(app => (
           <div key={app.id}>
@@ -119,6 +121,7 @@ function BalanceSection({ apps }) {
 
 // 用途別の内訳。金額は「相当額」であって支出ではないため、通貨量を主として見せる
 function UsageSection({ apps, consumptions, acquisitions, records }) {
+  if (apps.length === 0) return null   // 詳細モードのアプリが無ければ表示しない
   const now = new Date()
   const [scope, setScope] = useState('month')   // month | all
   const [appId, setAppId] = useState('all')

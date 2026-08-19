@@ -13,7 +13,15 @@
 // 移行は1回だけ行い、apps に schemaVersion を立てて再実行を防ぐ。
 // 旧コレクション(purchases / pulls)は削除せず残す。復元の手がかりになるため。
 
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
+
+// v1.9 でアプリごとの記録の細かさ(trackingLevel)を導入した。
+// 新規アプリは既定でシンプルだが、v1.8以前から使っているアプリは
+// 通貨や天井まで記録してきた実績があるため、詳細モードとして引き継ぐ。
+export function migrateTrackingLevel(app) {
+  if (app.trackingLevel) return null
+  return { trackingLevel: 'full' }
+}
 
 // v1.6以前はバナーごとに天井カウンターを持っていたが、実際のゲームでは
 // バナーが切り替わっても同じ枠の中では天井が引き継がれる。
@@ -189,6 +197,15 @@ export async function runMigration({ apps, banners, purchases, pulls, consumptio
         for (const id of g.bannerIds) await apis.banners.update(id, { poolId: ref.id })
         tick('天井枠を作成')
       }
+    }
+  }
+
+  // 既存アプリの記録の細かさを決める(v5)
+  for (const app of targets) {
+    const patch = migrateTrackingLevel(app)
+    if (patch) {
+      await apis.apps.update(app.id, patch)
+      tick(`${app.name} の記録設定`)
     }
   }
 

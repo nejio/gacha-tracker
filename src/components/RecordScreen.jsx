@@ -21,6 +21,8 @@ export default function RecordScreen({
 }) {
   const [subTab, setSubTab] = useState(prefill ? 'gacha' : 'acquire')
   const [showOther, setShowOther] = useState(false)
+  // どのアプリの記録かを最初に選ぶ。アプリごとに記録の細かさが違うため
+  const [appId, setAppId] = useState(prefill?.appId || (apps.length === 1 ? apps[0].id : ''))
 
   if (apps.length === 0) {
     return (
@@ -30,8 +32,51 @@ export default function RecordScreen({
     )
   }
 
+  const app = apps.find(a => a.id === appId)
+
+  // アプリ選択(2件以上あるときだけ)
+  const appPicker = apps.length > 1 && (
+    <div style={{ padding: '20px 16px 0' }}>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, color: 'var(--text-dim)' }}>
+        アプリ
+        <select value={appId} onChange={e => setAppId(e.target.value)} style={inputStyle}>
+          <option value="">選択してください</option>
+          {apps.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      </label>
+    </div>
+  )
+
+  if (!app) {
+    return (
+      <div>
+        {appPicker}
+        <div style={{ padding: '20px 16px', fontSize: 13, color: 'var(--text-faint)' }}>
+          記録するアプリを選んでください
+        </div>
+      </div>
+    )
+  }
+
+  // 課金額だけを追うアプリは、入力を金額とガチャ回数だけに絞る
+  if ((app.trackingLevel || 'simple') === 'simple') {
+    return (
+      <div>
+        {appPicker}
+        <SimpleForm
+          app={app}
+          banners={banners}
+          pityPools={pityPools}
+          acquisitionsApi={acquisitionsApi}
+          consumptionsApi={consumptionsApi}
+        />
+      </div>
+    )
+  }
+
   return (
     <div>
+      {appPicker}
       <div style={{ display: 'flex', gap: 8, padding: '20px 16px 0' }}>
         {MAIN_TABS.map(t => (
           <button
@@ -91,6 +136,189 @@ export default function RecordScreen({
         />
       )}
     </div>
+  )
+}
+
+// ============ シンプルモード ============
+// 課金管理の中心は「いくら払ったか」なので、入力は金額だけで完結させる。
+// ただし天井カウンターは一度途切れるとゲーム内で確認できないゲームが多く、
+// 復旧が難しいため、ガチャ回数だけは任意で記録できるようにしておく。
+// この記録は消費量0で保存するため、残高計算には影響しない。
+function SimpleForm({ app, banners, pityPools, acquisitionsApi, consumptionsApi }) {
+  const [amountYen, setAmountYen] = useState('')
+  const [note, setNote] = useState('')
+  const [showGacha, setShowGacha] = useState(false)
+  const [poolId, setPoolId] = useState('')
+  const [pullCount, setPullCount] = useState(10)
+  const [outcome, setOutcome] = useState('none')
+  const [atPull, setAtPull] = useState('')
+  const [saved, setSaved] = useState(null)
+  const [errorMsg, setErrorMsg] = useState('')
+
+  const appPools = (pityPools || []).filter(p => p.appId === app.id)
+  const selectedPool = appPools.find(p => p.id === poolId)
+  const atPullValue = atPull !== '' ? Number(atPull) : Number(pullCount)
+  const recordGacha = showGacha && Number(pullCount) > 0
+
+  const pityPreview = useMemo(() => {
+    if (!recordGacha || !selectedPool) return null
+    return applyPullToBanner(selectedPool, Number(pullCount) || 0, outcome, atPullValue)
+  }, [recordGacha, selectedPool, pullCount, outcome, atPullValue])
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!amountYen && !recordGacha) {
+      setErrorMsg('課金額を入力するか、ガチャの記録を追加してください')
+      return
+    }
+    setErrorMsg('')
+    const now = new Date().toISOString()
+    const lines = []
+
+    if (amountYen) {
+      await acquisitionsApi.add({
+        appId: app.id,
+        currencyId: 'main',
+        date: now,
+        amountYen: Number(amountYen),
+        isFree: false,
+        quantity: 0,          // 通貨は追跡しないので0
+        note: note || null
+      })
+      lines.push({ label: '課金額', value: `¥${Number(amountYen).toLocaleString('ja-JP')}`, accent: 'var(--gold)' })
+    }
+
+    let pityTriggered = false
+    let finalLost = false
+    if (recordGacha) {
+      let finalObtained = outcome === 'obtained'
+      finalLost = outcome === 'lost'
+      if (selectedPool) {
+        const r = applyPullToBanner(selectedPool, Number(pullCount) || 0, outcome, atPullValue)
+        finalObtained = r.obtained
+        finalLost = r.lost
+        pityTriggered = r.isPityTriggered
+      }
+      await consumptionsApi.add({
+        appId: app.id,
+        currencyId: 'main',
+        date: now,
+        quantity: 0,          // 天井の計算にのみ使う記録。残高には影響しない
+        tag: 'ガチャ',
+        paidOnly: false,
+        poolId: poolId || null,
+        bannerId: null,
+        pullCount: Number(pullCount) || 0,
+        outcome,
+        obtained: finalObtained,
+        lost: finalLost,
+        obtainedAtPull: outcome !== 'none' ? atPullValue : null,
+        isPityTriggered: pityTriggered,
+        note: null
+      })
+      lines.push({ label: '引いた回数', value: `${Number(pullCount).toLocaleString('ja-JP')}連`, accent: 'var(--teal)' })
+      if (selectedPool) {
+        const after = applyPullToBanner(selectedPool, Number(pullCount) || 0, outcome, atPullValue)
+        lines.push({ label: `天井(${selectedPool.name})`, value: `${after.pityCurrent} / ${selectedPool.pityMax}` })
+      }
+    }
+
+    setSaved({
+      title: '記録しました',
+      lines,
+      note: pityTriggered ? '天井に到達したため、確定入手として記録しました'
+        : finalLost ? 'すり抜けのため、次の最高レアは確定になります'
+        : null
+    })
+    setAmountYen(''); setNote(''); setPullCount(10); setOutcome('none'); setAtPull('')
+  }
+
+  return (
+    <form onSubmit={submit} style={formStyle}>
+      <Field label="課金額(円)">
+        <input type="number" inputMode="numeric" value={amountYen} onChange={e => setAmountYen(e.target.value)} style={inputStyle} placeholder="3000" />
+      </Field>
+
+      <Field label="メモ(任意)">
+        <input value={note} onChange={e => setNote(e.target.value)} style={inputStyle} placeholder="例: 月パス、石パック" />
+      </Field>
+
+      <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+        <label style={checkStyle}>
+          <input type="checkbox" checked={showGacha} onChange={e => setShowGacha(e.target.checked)} />
+          ガチャを引いた(天井カウンターを進める)
+        </label>
+
+        {showGacha && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
+            {appPools.length > 0 && (
+              <Field label="天井枠">
+                <select value={poolId} onChange={e => setPoolId(e.target.value)} style={inputStyle}>
+                  <option value="">指定しない</option>
+                  {appPools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </Field>
+            )}
+
+            {selectedPool && (
+              <div style={{ background: 'var(--ink-bg-elevated)', borderRadius: 'var(--radius-sm)', padding: 12 }}>
+                <PityGauge banner={selectedPool} segments={16} />
+              </div>
+            )}
+
+            <Field label="ガチャ回数">
+              <input type="number" value={pullCount} onChange={e => setPullCount(e.target.value)} style={inputStyle} min="0" />
+            </Field>
+
+            <Field label="このガチャの結果">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {[
+                  { v: 'none', t: '最高レアは出なかった' },
+                  { v: 'obtained', t: '目的のものを入手した' },
+                  { v: 'lost', t: 'すり抜けた(最高レアは出たが目的ではない)' }
+                ].map(o => (
+                  <button
+                    key={o.v}
+                    type="button"
+                    onClick={() => { setOutcome(o.v); setAtPull('') }}
+                    style={{
+                      textAlign: 'left', padding: '9px 12px', borderRadius: 'var(--radius-sm)', fontSize: 13,
+                      border: `1px solid ${outcome === o.v ? 'var(--gold)' : 'var(--line)'}`,
+                      background: outcome === o.v ? 'var(--gold-soft)' : 'var(--ink-bg-elevated)',
+                      color: outcome === o.v ? 'var(--gold)' : 'var(--text)'
+                    }}
+                  >
+                    {o.t}
+                  </button>
+                ))}
+              </div>
+            </Field>
+
+            {outcome !== 'none' && Number(pullCount) > 1 && (
+              <Field label={`${pullCount}連のうち何回目で${outcome === 'obtained' ? '入手' : 'すり抜け'}しましたか(空欄なら最後の回)`}>
+                <input type="number" min="1" max={pullCount} value={atPull} onChange={e => setAtPull(e.target.value)} style={inputStyle} />
+              </Field>
+            )}
+
+            {pityPreview && selectedPool && (
+              <div style={{ fontSize: 12, color: 'var(--text-dim)', background: 'var(--ink-bg-elevated)', borderRadius: 'var(--radius-sm)', padding: '8px 10px' }}>
+                天井カウンター: <span className="mono">現在 {selectedPool.pityCurrent || 0}</span>
+                {' → '}
+                <span className="mono" style={{ color: 'var(--gold)' }}>記録後 {pityPreview.pityCurrent}</span>
+                <span className="mono"> / {selectedPool.pityMax}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <button type="submit" style={primaryBtnStyle}>記録する</button>
+      <div style={{ fontSize: 10, color: 'var(--text-faint)', textAlign: 'center', lineHeight: 1.6 }}>
+        通貨の残高や用途の内訳も管理したい場合は、管理タブでこのアプリを詳細モードに切り替えてください
+      </div>
+      <Messages error={errorMsg} success="" />
+      <SavedDialog result={saved} onClose={() => setSaved(null)} />
+    </form>
   )
 }
 

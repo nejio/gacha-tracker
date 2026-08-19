@@ -53,6 +53,8 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pityP
       name: newApp.trim(),
       currencies,
       defaultCurrencyId: 'main',
+      // 既定は課金額だけを追うシンプルモード。必要な人だけ詳細に切り替える
+      trackingLevel: 'simple',
       schemaVersion: 2,
       openingDate: new Date().toISOString(),
       currencyPerPurchaseUnit: preset?.currencyPerPurchaseUnit || null
@@ -152,7 +154,8 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pityP
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
                 <div style={{ fontWeight: 500 }}>{app.name}</div>
-                <CurrencyEditor app={app} appsApi={appsApi} />
+                <TrackingLevelSwitch app={app} appsApi={appsApi} />
+                {(app.trackingLevel || 'simple') === 'full' && <CurrencyEditor app={app} appsApi={appsApi} />}
               </div>
               <div style={{ display: 'flex', gap: 12 }}>
                 <button onClick={() => setExpandedAppId(expandedAppId === app.id ? null : app.id)} style={linkBtnStyle}>
@@ -179,6 +182,85 @@ export default function ManageScreen({ apps, appsApi, banners, bannersApi, pityP
         <div className="mono">v{APP_VERSION}</div>
         {BUILD_DATE && <div className="mono">build {formatBuildDate(BUILD_DATE)}</div>}
       </div>
+    </div>
+  )
+}
+
+// アプリごとに記録の細かさを切り替える。
+// 課金管理の中心は金額なので既定はシンプル。残高や用途まで追いたい人だけ詳細にする。
+// 切り替えても記録は消えず、表示が変わるだけ。
+function TrackingLevelSwitch({ app, appsApi }) {
+  const level = app.trackingLevel || 'simple'
+  const [confirming, setConfirming] = useState(null)
+
+  const apply = async (next) => {
+    setConfirming(null)
+    await appsApi.update(app.id, { trackingLevel: next })
+  }
+
+  const OPTIONS = [
+    { v: 'simple', t: 'シンプル', d: '課金額とガチャ回数だけ記録' },
+    { v: 'full', t: '詳細', d: '通貨の残高・交換・用途も管理' }
+  ]
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 10, color: 'var(--text-dim)', marginBottom: 4 }}>記録の細かさ</div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {OPTIONS.map(o => (
+          <button
+            key={o.v}
+            onClick={() => { if (o.v !== level) setConfirming(o.v) }}
+            style={{
+              flex: 1, textAlign: 'left', padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+              border: `1px solid ${level === o.v ? 'var(--gold)' : 'var(--line)'}`,
+              background: level === o.v ? 'var(--gold-soft)' : 'var(--ink-bg-elevated)'
+            }}
+          >
+            <div style={{ fontSize: 12, color: level === o.v ? 'var(--gold)' : 'var(--text)' }}>{o.t}</div>
+            <div style={{ fontSize: 9, color: 'var(--text-faint)', marginTop: 1, lineHeight: 1.4 }}>{o.d}</div>
+          </button>
+        ))}
+      </div>
+
+      {confirming && (
+        <div onClick={() => setConfirming(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 250,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: 'var(--ink-bg-card)', border: '1px solid var(--line)',
+            borderRadius: 'var(--radius)', padding: 18, maxWidth: 340, width: '100%'
+          }}>
+            <div style={{ fontWeight: 500, marginBottom: 10 }}>
+              {confirming === 'full' ? '詳細モードに切り替えますか?' : 'シンプルモードに切り替えますか?'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.7, marginBottom: 14 }}>
+              {confirming === 'full' ? (
+                <>
+                  これまでの記録は残っています。シンプルモードの間に増減した通貨は
+                  記録されていないため、残高がずれている可能性があります。
+                  次にガチャを引くときに現在の残高を入力すると自動で調整されます。
+                </>
+              ) : (
+                <>
+                  記録は削除されません。通貨の残高や用途の内訳が画面に表示されなくなり、
+                  記録するのは課金額とガチャ回数だけになります。
+                  いつでも詳細モードに戻せます。
+                </>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setConfirming(null)} style={{ flex: 1, padding: '11px 0', borderRadius: 'var(--radius-sm)', background: 'var(--ink-bg-elevated)', color: 'var(--text-dim)', fontSize: 14 }}>
+                キャンセル
+              </button>
+              <button onClick={() => apply(confirming)} style={{ flex: 1, padding: '11px 0', borderRadius: 'var(--radius-sm)', background: 'var(--gold)', color: 'var(--ink-bg)', fontWeight: 700, fontSize: 14 }}>
+                切り替える
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
